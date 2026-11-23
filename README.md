@@ -6,8 +6,8 @@ takes a workload (a trace of operations) and a hardware configuration, and
 reports matrix-unit utilization, local memory occupancy over time and total
 cycles. A sweep script then searches the hardware parameters for each workload.
 
-Status: **Phase 1 (translator)**. The trace and HW config formats and the
-workload generator are in place. The simulator itself comes in later phases
+Status: **Phase 2 (HW model)**. The trace and HW config formats, the
+workload generator and the HW scoreboard are in place. The simulator itself comes in later phases
 (see [Build plan](#build-plan)).
 
 ## Quick start
@@ -133,6 +133,29 @@ the report as a possible HW improvement.
 Processing one output tile strictly in order needs 3 tiles when `Kt = 1` (A, B,
 P) and 4 when `Kt > 1` (running sum, A, B, new partial). Below that a workload
 is infeasible. The memory sweep starts there.
+
+## HW model (scoreboard)
+
+`matmul_sim/hw_model.py` is a passive record of what is in use and what is
+free. It has no clock and no policy: the simulator tells it what starts and
+finishes, and the scheduler reads it. Illegal operations raise `HWError`,
+which always means a simulator or scheduler bug.
+
+| Part | Tracks | Main calls |
+|---|---|---|
+| `UnitPool` (`hw.dma`, `hw.matrix`) | each slot free, or running one command until a known end tick; busy intervals for Gantt charts; busy ticks for utilization | `start(cmd, now, duration)`, `finish(slot, now)`, `free_count`, `next_end()` |
+| `LocalMemory` (`hw.memory`) | resident tiles: state `PENDING` (being written) or `READY`, remaining uses, pins (running readers); every change logged with its tick | `allocate`, `mark_ready`, `pin`, `unpin`, `free_tile`, `evict`, `evictable()`, `occupancy_series()` |
+| `HWModel` | both pools plus memory for one `HWConfig` | `pool(unit)`, `duration(unit)`, `next_event()`, `utilization(total_ticks)` |
+
+Tile lifecycle: `allocate` when the writing command is issued (PENDING) →
+`mark_ready` when it finishes → `pin` / `unpin` around each command that reads
+it (each `unpin` consumes one remaining use) → `free_tile` when no uses remain
+(final outputs: after SAVE), or `evict` earlier if the scheduler drops it,
+which returns the remaining uses so the simulator can schedule a reload.
+
+Enforced invariants: memory never exceeds capacity; a tile is resident at
+most once; only READY, unpinned tiles can be freed or evicted; one command
+per unit slot at a time.
 
 ## Trace format
 
@@ -260,8 +283,8 @@ values from the brief. Unknown keys are rejected. Example:
 | Phase | Work | Status |
 |---|---|---|
 | 0 | Trace and HW config formats, validation, tests | done |
-| 1 | Translator: tiling, padding, dependencies, ACC groups, trace writers | **this PR** |
-| 2 | HW model: unit and memory slots, residency, event log | |
+| 1 | Translator: tiling, padding, dependencies, ACC groups, trace writers | done |
+| 2 | HW model: unit and memory slots, residency, event log | **this PR** |
 | 3 | Simulator + FIFO scheduler, deadlock detection, metrics, lower bound | |
 | 4 | Greedy and memory-aware schedulers, eviction and reload | |
 | 5 | Analyzer plots | |
@@ -276,6 +299,7 @@ matmul_sim/
   hw_config.py   # HW parameters and fixed constants
   translator.py  # matmul -> trace (tiling, padding, deps, ACC groups)
   workloads.py   # named presets: small, medium, large, skewed
+  hw_model.py    # scoreboard: DMA and matrix unit pools, local memory
 scripts/
   gen_workload.py
 examples/        # hand-written example trace and HW config
