@@ -1,0 +1,289 @@
+<meta charset="utf-8">
+<title>Tile Engine Sizer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: control deck on top (workload, two stepped sliders), then a results strip, then map beside the three time curves. */
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --ink2: #545b66; --line: #dde1e7; --faint: #eceff3;
+  --accent: #2a5bd7; --matrix: #2a78d6; --dma: #e0662e; --mem: #13a273; --off: #b9bec7;
+  --good: #13a273; --warn: #c98a12;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1216; --panel: #171b21; --ink: #e8ebf0; --ink2: #9aa3af; --line: #2a3039; --faint: #20252d;
+  --accent: #6d95ff; --matrix: #5b9cf0; --dma: #f08453; --mem: #34c48e; --off: #4a515c; --good: #34c48e; --warn: #e3a93a;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1216; --panel: #171b21; --ink: #e8ebf0; --ink2: #9aa3af; --line: #2a3039; --faint: #20252d;
+  --accent: #6d95ff; --matrix: #5b9cf0; --dma: #f08453; --mem: #34c48e; --off: #4a515c; --good: #34c48e; --warn: #e3a93a;
+  color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 40px }
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px }
+header h1 { font-family: var(--display); font-weight: 700; font-size: 24px; margin: 0; letter-spacing: -0.01em }
+header p { margin: 4px 0 0; color: var(--ink2); max-width: 75ch }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px }
+.label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink2); font-weight: 600 }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums }
+.deck { display: grid; gap: 18px }
+.wl { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end }
+.wl select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); min-width: 0; max-width: 100% }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--ink2); font-size: 13px }
+.facts b { color: var(--ink); font-weight: 500 }
+.slider { display: grid; gap: 8px }
+.slider-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap }
+.slider-head .val { font-family: var(--mono); font-size: 13px; color: var(--ink) }
+.steps { position: relative; display: flex; justify-content: space-between; gap: 2px; padding: 4px 0 0; overflow-x: auto }
+.steps::before { content: ""; position: absolute; left: 14px; right: 14px; top: 17px; height: 2px; background: var(--line) }
+.step { position: relative; flex: 1 1 0; min-width: 44px; display: grid; justify-items: center; gap: 4px; background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink2); font: inherit }
+.step .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--panel); border: 2px solid var(--ink2); z-index: 1 }
+.step .t { font-family: var(--mono); font-size: 11.5px; white-space: nowrap }
+.step.on .dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent) }
+.step.on .t { color: var(--ink); font-weight: 500 }
+.step.off .dot { border-color: var(--off); background: repeating-linear-gradient(45deg, var(--faint) 0 3px, var(--panel) 3px 6px) }
+.step.off .t { color: var(--off); text-decoration: line-through }
+.step:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px }
+.shortcuts { display: flex; gap: 8px; flex-wrap: wrap }
+.btn { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer }
+.btn:hover { border-color: var(--accent) }
+.btn.on { background: var(--accent); border-color: var(--accent); color: #fff }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.note { min-height: 20px; font-size: 13px; color: var(--warn) }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px }
+.kpi { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel) }
+.kpi .v { font-family: var(--mono); font-size: 20px; font-weight: 500; margin-top: 2px; white-space: nowrap }
+.kpi .s { font-size: 12px; color: var(--ink2) }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid currentColor }
+.lim-matrix { color: var(--matrix) } .lim-dma { color: var(--dma) } .lim-path { color: var(--ink2) }
+.two { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 16px }
+@media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr) } }
+svg { display: block; width: 100%; height: auto }
+svg text { fill: var(--ink2); font-family: var(--mono); font-size: 10px }
+.grid line { stroke: var(--faint) }
+.axis { stroke: var(--line) }
+.caption { font-size: 12.5px; color: var(--ink2); margin: 6px 0 0 }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink2); margin-top: 4px }
+.sw { display: inline-block; width: 12px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px }
+footer { color: var(--ink2); font-size: 12.5px; max-width: 95ch }
+@media (prefers-reduced-motion: no-preference) { .step .dot { transition: background .15s, border-color .15s } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Tile Engine Sizer</h1>
+    <p>Pick a matmul, then click along the two sliders. Speed sets how many matrix units you need; memory sets how many DMA units it takes to keep them fed. Steps that can't work together grey out. Everything below comes from the mathematical model.</p>
+  </header>
+
+  <section class="panel deck" aria-label="Controls">
+    <div class="wl">
+      <div style="display:grid;gap:4px;min-width:0">
+        <label class="label" for="wl">Workload</label>
+        <select id="wl"></select>
+      </div>
+      <div class="facts" id="facts"></div>
+    </div>
+
+    <div class="slider">
+      <div class="slider-head">
+        <span class="label">Speed: matrix units' worth</span>
+        <span class="val" id="speedVal"></span>
+      </div>
+      <div class="steps" id="speedSteps" role="group" aria-label="Speed steps"></div>
+    </div>
+
+    <div class="slider">
+      <div class="slider-head">
+        <span class="label">Local memory S (64×64 tiles)</span>
+        <span class="val" id="memVal"></span>
+      </div>
+      <div class="steps" id="memSteps" role="group" aria-label="Memory steps"></div>
+      <div class="shortcuts">
+        <button class="btn" id="tiny" type="button">Tiny: least memory</button>
+        <button class="btn" id="compact" type="button">Compact: balanced</button>
+      </div>
+    </div>
+    <div class="note" id="note" aria-live="polite"></div>
+  </section>
+
+  <section class="kpis" id="kpis" aria-label="Results"></section>
+
+  <section class="two">
+    <div class="panel">
+      <div class="label">Where you are</div>
+      <svg id="map" viewBox="0 0 460 340" role="img" aria-label="Speed against memory map"></svg>
+      <div class="legend">
+        <span><span class="sw" style="background:color-mix(in srgb,var(--matrix) 25%,transparent)"></span>Tiny zone</span>
+        <span><span class="sw" style="background:color-mix(in srgb,var(--mem) 25%,transparent)"></span>Compact zone</span>
+        <span><span class="sw" style="background:var(--off)"></span>step can't meet the speed</span>
+      </div>
+      <p class="caption">Left edge: least memory that reaches each speed. Right edge: memory beyond which more saves no DMA units. The midline between them splits Tiny from Compact.</p>
+    </div>
+    <div class="panel">
+      <div class="label">Over time (model, quasi-optimal schedule)</div>
+      <svg id="curves" viewBox="0 0 560 400" role="img" aria-label="Matrix, DMA and memory usage over time"></svg>
+      <p class="caption">Matrix units start after the first tile lands (4 ticks) and finish with the last save. Memory is the least the schedule needs: running sums plus tiles in flight (Little's law).</p>
+    </div>
+  </section>
+
+  <footer>
+    Model: 64×64 tiles; 1 tick = 128 cycles; LOAD/SAVE 4 ticks, COMPUTE/ACC 1 tick. Speed P means the job finishes as fast as P matrix units kept busy: target T = 8 + ⌈W / P⌉ ticks, so Nm = ⌈W / (T − 8)⌉. For each memory size the optimizer tries every block and panel tiling, keeps those that fit (running sums + in-flight tiles ≤ S) and have enough independent work for Nm units, and picks the one needing the fewest DMA units.
+  </footer>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let DATA = [], st = { w: 5, si: 3, mi: 0 }, note = "";
+  const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "K" : Math.round(n).toLocaleString();
+  const memLab = s => s >= 1024 ? (s / 1024) + "K" : String(s);
+  const W = () => DATA[st.w];
+  const cell = (i, j) => W().cells[i][j];
+  const firstFeasibleMem = i => W().cells[i].findIndex(c => c);
+  const compactMem = i => {
+    const g = W(), lo = g.s_min[i], hi = g.s_sat[i];
+    const mid = Math.sqrt(lo * hi);
+    let best = -1, bd = 1e9;
+    g.mems.forEach((s, j) => { if (cell(i, j)) { const d = Math.abs(Math.log(s / mid)); if (d < bd) { bd = d; best = j } } });
+    return best;
+  };
+
+  function steps(el, items, onIdx, isOff, offTitle, click) {
+    el.innerHTML = "";
+    items.forEach((lab, k) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.id = el.id + "-" + k;
+      b.className = "step" + (k === onIdx ? " on" : "") + (isOff(k) ? " off" : "");
+      b.innerHTML = `<span class="dot"></span><span class="t">${lab}</span>`;
+      b.title = isOff(k) ? offTitle(k) : lab;
+      b.setAttribute("aria-pressed", k === onIdx);
+      b.onclick = () => click(k);
+      el.appendChild(b);
+    });
+  }
+
+  function clickSpeed(i) {
+    st.si = i; note = "";
+    if (!cell(i, st.mi)) {
+      const j = firstFeasibleMem(i);
+      note = `Memory raised to ${W().mems[j]} tiles: ${W().mems[st.mi]} can't reach ${W().speeds[i]}× speed.`;
+      st.mi = j;
+    }
+    render();
+  }
+  function clickMem(j) {
+    st.mi = j; note = "";
+    if (!cell(st.si, j)) {
+      let i = st.si; while (i > 0 && !cell(i, j)) i--;
+      if (!cell(i, j)) { i = 0; st.mi = firstFeasibleMem(0); }
+      note = `Speed lowered to ${W().speeds[i]}×: ${W().mems[j]} tiles can't keep ${W().speeds[st.si]}× fed.`;
+      st.si = i;
+    }
+    render();
+  }
+
+  function render() {
+    const g = W(), c = cell(st.si, st.mi);
+    $("facts").innerHTML = `<span><b>${g.M}×${g.K}×${g.N}</b> = ${g.m}×${g.k}×${g.n} tiles</span>
+      <span>matrix ops W <b class="mono">${g.W.toLocaleString()}</b></span>
+      <span>SAVEs <b class="mono">${g.SAVE.toLocaleString()}</b></span>
+      <span>LOADs at best <b class="mono">${g.LOAD_min.toLocaleString()}</b></span>`;
+    steps($("speedSteps"), g.speeds.map(p => p + "×"), st.si, i => !cell(i, st.mi),
+      i => `Needs at least ${Math.ceil(g.s_min[i])} tiles of memory`, clickSpeed);
+    steps($("memSteps"), g.mems.map(memLab), st.mi, j => !cell(st.si, j),
+      () => `Too small for ${g.speeds[st.si]}× speed (needs ${Math.ceil(g.s_min[st.si])}+)`, clickMem);
+    $("speedVal").textContent = `${g.speeds[st.si]}× → target ${fmt(g.targets[st.si])} ticks`;
+    $("memVal").textContent = `${g.mems[st.mi].toLocaleString()} tiles = ${(g.mems[st.mi] * 8 / 1024).toFixed(g.mems[st.mi] < 128 ? 2 : 1)} MB at 2 B/element`;
+    const tj = firstFeasibleMem(st.si), cj = compactMem(st.si);
+    $("tiny").classList.toggle("on", st.mi === tj);
+    $("compact").classList.toggle("on", st.mi === cj);
+    $("note").textContent = note || (tj === cj ? "This workload has no memory dial at this speed: Tiny and Compact are the same." : "");
+    const lim = c.limiter;
+    $("kpis").innerHTML = [
+      ["Matrix units Nm", c.Nm, "set by the speed"],
+      ["DMA units Nd", c.Nd, "set by the tiling's transfers"],
+      ["Memory S", g.mems[st.mi].toLocaleString(), `needs ${c.mem_needed_pct}% of it`],
+      ["Total cycles", fmt(c.T * 128), `${fmt(c.T)} ticks`],
+      ["Matrix usage", c.util + "%", "average over the run"],
+      ["DMA usage", c.dma_util + "%", "average over the run"],
+      ["Tiling", c.tiling.replace("block", "block ").replace("panel", " panel "), `<span class="pill lim-${lim}">${lim}-bound</span>`],
+    ].map(([k, v, s]) => `<div class="kpi"><div class="label">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+    drawMap(g); drawCurves(c);
+  }
+
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (t, a, p) => { const e = document.createElementNS(ns, t); for (const k in a) e.setAttribute(k, a[k]); p && p.appendChild(e); return e };
+
+  function drawMap(g) {
+    const svg = $("map"); svg.innerHTML = "";
+    const L = 64, R = 446, T = 14, B = 300;
+    const x0 = Math.log2(g.mems[0]), x1 = Math.log2(g.mems[g.mems.length - 1]);
+    const y0 = 0, y1 = Math.max(1, Math.log2(g.speeds[g.speeds.length - 1]));
+    const X = s => L + (Math.log2(s) - x0) / Math.max(1e-9, x1 - x0) * (R - L);
+    const Y = p => B - (Math.log2(p) - y0) / Math.max(1e-9, y1 - y0) * (B - T);
+    const gr = el("g", { class: "grid" }, svg);
+    g.mems.forEach(s => { el("line", { x1: X(s), x2: X(s), y1: T, y2: B }, gr); const t = el("text", { x: X(s), y: B + 14, "text-anchor": "middle" }, svg); t.textContent = memLab(s) });
+    g.speeds.forEach(p => { el("line", { x1: L, x2: R, y1: Y(p), y2: Y(p) }, gr); const t = el("text", { x: L - 6, y: Y(p) + 3, "text-anchor": "end" }, svg); t.textContent = p + "×" });
+    const xl = el("text", { x: (L + R) / 2, y: B + 32, "text-anchor": "middle" }, svg); xl.textContent = "local memory S (tiles, log scale)";
+    const yl = el("text", { x: 10, y: (T + B) / 2, "text-anchor": "middle", transform: `rotate(-90 10 ${(T + B) / 2})` }, svg); yl.textContent = "speed (matrix units' worth)";
+    const clampX = s => X(Math.min(Math.max(s, g.mems[0]), g.mems[g.mems.length - 1]));
+    const lo = g.speeds.map((p, i) => [clampX(g.s_min[i]), Y(p)]);
+    const hi = g.speeds.map((p, i) => [clampX(g.s_sat[i]), Y(p)]);
+    const md = g.speeds.map((p, i) => [clampX(Math.sqrt(g.s_min[i] * g.s_sat[i])), Y(p)]);
+    const poly = (a, b, col) => el("polygon", { points: a.concat(b.slice().reverse()).map(q => q.join(",")).join(" "), fill: col, "fill-opacity": 0.22, stroke: "none" }, svg);
+    poly(lo, md, css("--matrix")); poly(md, hi, css("--mem"));
+    const line = (pts, dash, w) => el("polyline", { points: pts.map(q => q.join(",")).join(" "), fill: "none", stroke: css("--ink2"), "stroke-width": w, "stroke-dasharray": dash }, svg);
+    line(lo, "", 1.6); line(hi, "5 4", 1.2); line(md, "2 3", 1);
+    g.speeds.forEach((p, i) => g.mems.forEach((s, j) => {
+      const ok = !!cell(i, j);
+      const d = el("circle", { cx: X(s), cy: Y(p), r: 3.2, fill: ok ? css("--ink2") : "none", stroke: ok ? "none" : css("--off"), "stroke-width": 1.2, style: "cursor:pointer" }, svg);
+      d.onclick = () => { st.si = i; if (ok) { st.mi = j; note = ""; render() } else clickSpeed(i) };
+    }));
+    const cx = X(g.mems[st.mi]), cy = Y(g.speeds[st.si]);
+    el("circle", { cx, cy, r: 9, fill: css("--accent"), "fill-opacity": 0.18 }, svg);
+    el("circle", { cx, cy, r: 5.5, fill: css("--accent"), stroke: css("--panel"), "stroke-width": 2 }, svg);
+    el("line", { x1: L, x2: R, y1: B, y2: B, class: "axis" }, svg);
+  }
+
+  function drawCurves(c) {
+    const svg = $("curves"); svg.innerHTML = "";
+    const L = 44, R = 548, H = 92, gap = 30, top = 18;
+    const tmax = c.t[c.t.length - 1] || 1;
+    const X = t => L + t / tmax * (R - L);
+    [["matrix units busy", c.mat, "--matrix", c.util], ["DMA units busy", c.dma, "--dma", c.dma_util], ["local memory used", c.mem, "--mem", c.mem_mean]].forEach(([name, ys, col, avg], k) => {
+      const y0 = top + k * (H + gap), Y = v => y0 + H - v / 100 * H;
+      const gr = el("g", { class: "grid" }, svg);
+      [0, 50, 100].forEach(v => { el("line", { x1: L, x2: R, y1: Y(v), y2: Y(v) }, gr); const t = el("text", { x: L - 6, y: Y(v) + 3, "text-anchor": "end" }, svg); t.textContent = v + "%" });
+      const pts = c.t.map((t, i) => `${X(t).toFixed(1)},${Y(ys[i]).toFixed(1)}`);
+      el("polygon", { points: `${L},${Y(0)} ${pts.join(" ")} ${X(tmax)},${Y(0)}`, fill: css(col), "fill-opacity": 0.14 }, svg);
+      el("polyline", { points: pts.join(" "), fill: "none", stroke: css(col), "stroke-width": 1.8 }, svg);
+      const lab = el("text", { x: L, y: y0 - 5, style: `fill:${css("--ink")};font-family:var(--body);font-size:11.5px;font-weight:600` }, svg);
+      lab.textContent = `${name} · avg ${avg}%`;
+    });
+    const yb = top + 3 * (H + gap) - gap;
+    [0, 0.25, 0.5, 0.75, 1].forEach(f => { const t = el("text", { x: X(f * tmax), y: yb + 14, "text-anchor": f === 0 ? "start" : f === 1 ? "end" : "middle" }, svg); t.textContent = fmt(f * tmax) });
+    const xl = el("text", { x: (L + R) / 2, y: yb + 28, "text-anchor": "middle" }, svg); xl.textContent = "time (ticks)";
+  }
+
+  $("tiny").onclick = () => { st.mi = firstFeasibleMem(st.si); note = ""; render() };
+  $("compact").onclick = () => { st.mi = compactMem(st.si); note = ""; render() };
+  $("wl").onchange = e => {
+    st.w = +e.target.value; const g = W();
+    st.si = Math.min(g.speeds.length - 1, Math.floor(g.speeds.length / 2)); st.mi = compactMem(st.si); note = ""; render();
+  };
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  mq.addEventListener && mq.addEventListener("change", () => DATA.length && render());
+  new MutationObserver(() => DATA.length && render()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  fetch("data.json").then(r => r.json()).then(d => {
+    DATA = d;
+    $("wl").innerHTML = d.map((g, i) => `<option value="${i}">${g.name}</option>`).join("");
+    $("wl").value = st.w; st.mi = compactMem(st.si); render();
+  }).catch(() => { $("note").textContent = "Could not load the model's results (data.json)." });
+})();
+</script>
