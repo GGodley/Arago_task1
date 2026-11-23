@@ -38,11 +38,11 @@ All quantities are in tiles (one 64x64 block) or ticks (128 cycles).
                             COMPUTE/ACC (2 per matrix unit) can overlap
     tiling budget:  (bm + 1)(bn + 1) <= S - O,   no reloads once S >= S0 + O
 
-## Step 3: memory sets concurrency (planned: `foundation/timing.py`)
+## Step 3: memory sets concurrency (implemented in `foundation/timing.py`)
 
     Little's law:  DMA rate <= min(Nd / Ld, F / tau)
 
-## Step 4: time (planned)
+## Step 4: time (implemented in `foundation/timing.py`)
 
     T_mat  = 2 Ld + ceil(W / Nm) Lm
     T_dma  = (L + Sv) max(Ld / Nd, tau / F)

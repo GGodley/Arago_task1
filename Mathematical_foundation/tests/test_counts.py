@@ -36,3 +36,14 @@ def test_loads_with_memory_bounds():
         L = loads_with_memory(1024, 1024, 1024, S)
         assert prev is None or L <= prev
         prev = L
+
+
+def test_timing_limits():
+    from foundation import predict_time
+
+    t = predict_time(64, 64, 64, 2, 1, 16)  # one tile: path-bound, 2 Ld + Lm
+    assert t.T == 9 and t.limiter == "path"
+    big = predict_time(4096, 4096, 4096, 32, 1, 1024)  # one matrix unit: T = 2 Ld + W
+    assert big.limiter == "matrix" and big.T == 8 + 64 * 64 * 127
+    slow = predict_time(4096, 4096, 4096, 1, 32, 1024)  # one DMA unit: DMA-bound
+    assert slow.limiter == "dma"

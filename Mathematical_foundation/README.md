@@ -52,5 +52,5 @@ python -m pytest Mathematical_foundation/tests
 |---|---|---|
 | 01 | How do MAC and DMA instruction counts grow with matrix size? | done |
 | 02 | How do instruction counts change with local memory size (4096³)? | done |
-| 03 | Timing model: predicted cycles and utilization vs simulator | planned |
+| 03 | [Timing vs units](experiments/03_timing_vs_units/): heatmaps of time over DMA and matrix unit counts | done |
 | 04 | Optimizer: cheapest (Nd, Nm, S) for a workload and time target | planned |
