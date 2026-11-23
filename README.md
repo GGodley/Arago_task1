@@ -22,23 +22,22 @@ python -m pytest
 ```bash
 python scripts/gen_workload.py --mkn 512 512 512                 # one matmul -> results/traces/
 python scripts/gen_workload.py --mkn 100 200 300 --format csv --out my.csv
-python scripts/gen_workload.py --preset small --order snake      # a workload class
+python scripts/gen_workload.py --preset small                    # a workload class
 python scripts/gen_workload.py --preset all                      # every preset
 ```
 
-Options:
-
-| Option | Values | Meaning |
-|---|---|---|
-| `--order` | `row` (default), `snake`, `blocked` | Order in which output tiles are visited. Sets the suggested program order only; execution is constrained by deps alone. |
-| `--block BI BJ` | default `4 4` | Group size for `blocked`: groups of BI x BJ output tiles share BI rows of A and BJ columns of B. |
-| `--acc` | `chain` (default), `tree` | Shape of the ACC reduction per output tile. `chain` puts Kt-1 ACCs on the critical path, `tree` puts ceil(log2 Kt). Same op count. |
+The translator only **slices and expands**. It knows nothing about the
+hardware, so it makes no ordering or pairing decisions: ops are written in a
+fixed i, j, k loop order that carries no meaning, and each output tile's ACC
+is a group whose pairing is decided at run time (see [ACC groups](#acc-groups)).
+All ordering is the scheduler's job.
 
 Dimensions that are not multiples of 64 are padded up. The trace metadata
 records `useful_fraction` (real work / padded work) and `footprint_tiles`
 (distinct A, B and C tiles).
 
-Op counts for a matmul of `Mt x Kt x Nt` tiles:
+Hardware command counts for a matmul of `Mt x Kt x Nt` tiles
+(`Trace.hw_op_counts()`):
 
 | Op | Count |
 |---|---|
@@ -83,8 +82,8 @@ The largest preset (4096³) is 532k ops and generates in a few seconds.
 
 | Block | Role |
 |---|---|
-| Translator | Slices `C = A x B` into 64x64 tile ops and assigns dependencies. Writes the trace. |
-| Scheduler | Picks which ready ops to issue each tick. Swappable (FIFO, greedy reuse-first, memory-aware, ...). Decides which tile to evict when memory is full. |
+| Translator | Slices `C = A x B` into 64x64 tile ops and assigns dependencies. No HW knowledge, no ordering. Writes the trace. |
+| Scheduler | Picks which ready ops to issue each tick, which two ready tiles each ACC adds, and which tile to evict when memory is full. Owns all ordering strategies (FIFO, greedy reuse-first, memory-aware, row/snake/blocked tile orders, ...). Swappable. |
 | HW model | Passive scoreboard: DMA and matrix unit slots, local memory slots, tile residency. |
 | Simulator | Event-driven clock. Retires ops, frees memory, inserts reload LOADs after evictions, asks the scheduler for work, detects deadlock. |
 | Analyzer | Plots and tables from simulator results. |
@@ -122,7 +121,7 @@ Variable: `Nd` (DMA units), `Nm` (matrix units), local memory size in tiles.
 |---|---|---|---|---|
 | `LOAD X` | DMA | 4 | global tile X | new local tile X |
 | `COMPUTE P = A x B` | matrix | 1 | local A, B | new local tile P |
-| `ACC R = S + P` | matrix | 1 | local S, P | new local tile R (S, P freed on completion) |
+| `ACC R = X + Y` | matrix | 1 | any two ready tiles X, Y of the same output tile's group | new local tile R (X, Y freed on completion) |
 | `SAVE R` | DMA | 4 | local R | global memory (local slot freed when done) |
 
 Each output tile `C[i,j]` takes `Kt` COMPUTEs, `Kt-1` ACCs and one SAVE, where
@@ -132,7 +131,7 @@ the report as a possible HW improvement.
 ### Minimum memory
 
 Processing one output tile strictly in order needs 3 tiles when `Kt = 1` (A, B,
-P) and 4 when `Kt > 1` (accumulator, A, B, new partial). Below that a workload
+P) and 4 when `Kt > 1` (running sum, A, B, new partial). Below that a workload
 is infeasible. The memory sweep starts there.
 
 ## Trace format
@@ -148,14 +147,14 @@ Every op has the same five fields:
 |---|---|
 | `id` | unique integer |
 | `type` | `LOAD`, `COMPUTE`, `ACC` or `SAVE` |
-| `srcs` | local tiles read (LOAD: none; COMPUTE/ACC: 2; SAVE: 1) |
+| `srcs` | local tiles read (LOAD: none; COMPUTE: 2; ACC: 2 or more; SAVE: 1) |
 | `dst` | local tile written (required except for SAVE, which writes to global memory) |
 | `deps` | ids of ops that must finish first; must include the producer of every src |
 
 Rules checked by `Trace.validate()`:
 
 - ids are unique and every dep exists; no dependency cycles;
-- arity per type as above;
+- arity per type as above, with no repeated src;
 - each tile is written by exactly one op;
 - every src is produced by some op, and that op is in `deps`;
 - every loaded tile is used, and every COMPUTE/ACC result is used or SAVEd.
@@ -166,7 +165,29 @@ Tile naming used by the translator (any unique string is valid):
 |---|---|
 | `A_i_k`, `B_k_j` | input tiles |
 | `P_i_j_k` | partial product `A_i_k x B_k_j` |
-| `S_i_j_k` | running sum for `C[i,j]` after step k (`S_i_j_1 = P_i_j_0 + P_i_j_1`) |
+| `C_i_j` | final sum for output tile `C[i,j]` (dst of its ACC group; when `Kt = 1` the single partial is saved directly) |
+
+### ACC groups
+
+An ACC record is a **reduction group**: it lists every partial that sums into
+one output tile, `C_i_j = P_i_j_0 + ... + P_i_j_{Kt-1}`, and leaves the
+pairing open. The translator can't choose a pairing because it doesn't know
+how many matrix units there are.
+
+Rules for the scheduler and simulator (Phases 3 and 4):
+
+1. A group of n srcs expands at run time into **n-1 binary ACC commands**,
+   1 tick each on a matrix unit.
+2. A command may add **any two ready tiles of the same group**: two partials,
+   a partial and an earlier sum, or two earlier sums.
+3. Each command writes a new local tile (allocated at issue) and frees its two
+   inputs when it completes. The last command writes the group's `dst`.
+4. A group's deps are satisfied **incrementally**: the first command can start
+   as soon as any two srcs exist, not when all of them do.
+5. With one free matrix unit the group behaves like a chain (Kt-1 ticks on the
+   critical path). With many it can behave like a tree (ceil(log2 Kt) ticks).
+   Which shape emerges is a result of the scheduler and HW config, not a
+   translator option.
 
 ### JSON
 
@@ -177,8 +198,8 @@ Tile naming used by the translator (any unique string is valid):
  "ops": [
   {"id": 0, "type": "LOAD", "srcs": [], "dst": "A_0_0", "deps": []},
   {"id": 4, "type": "COMPUTE", "srcs": ["A_0_0", "B_0_0"], "dst": "P_0_0_0", "deps": [0, 1]},
-  {"id": 6, "type": "ACC", "srcs": ["P_0_0_0", "P_0_0_1"], "dst": "S_0_0_1", "deps": [4, 5]},
-  {"id": 7, "type": "SAVE", "srcs": ["S_0_0_1"], "dst": null, "deps": [6]}
+  {"id": 6, "type": "ACC", "srcs": ["P_0_0_0", "P_0_0_1"], "dst": "C_0_0", "deps": [4, 5]},
+  {"id": 7, "type": "SAVE", "srcs": ["C_0_0"], "dst": null, "deps": [6]}
  ]
 }
 ```
@@ -194,8 +215,8 @@ leading `# key=value` lines (values JSON-encoded).
 id,type,srcs,dst,deps
 0,LOAD,,A_0_0,
 4,COMPUTE,A_0_0;B_0_0,P_0_0_0,0;1
-6,ACC,P_0_0_0;P_0_0_1,S_0_0_1,4;5
-7,SAVE,S_0_0_1,,6
+6,ACC,P_0_0_0;P_0_0_1,C_0_0,4;5
+7,SAVE,C_0_0,,6
 ```
 
 Full examples: [`examples/mm_64x128x64.json`](examples/mm_64x128x64.json) and
@@ -226,7 +247,7 @@ values from the brief. Unknown keys are rejected. Example:
 | A2 | Output slots are allocated at issue. Inputs and partials are freed after their last consumer. Final results are freed once SAVE reaches global memory. |
 | A3 | One shared pool of `Nd` DMA units. Each does one read or write at a time. |
 | A4 | ACC is a separate op. Fused MAC is only discussed as an improvement. |
-| A5 | ACC takes 2 same-size tiles and writes a new result tile. |
+| A5 | Each ACC command takes 2 same-size tiles and writes a new result tile. Which two is decided at run time within the output tile's group. |
 | A6 | The trace has one LOAD per distinct tile. The scheduler decides keep or evict, and the simulator inserts reloads. |
 | A7 | Every output tile must be SAVEd before the run ends. |
 | A8 | Sweep: `Nm` 1..16, `Nd` 1..16, memory from 3 or 4 tiles up to 512. |
@@ -239,7 +260,7 @@ values from the brief. Unknown keys are rejected. Example:
 | Phase | Work | Status |
 |---|---|---|
 | 0 | Trace and HW config formats, validation, tests | done |
-| 1 | Translator: tiling, padding, DAG, program order, trace writers | **this PR** |
+| 1 | Translator: tiling, padding, dependencies, ACC groups, trace writers | **this PR** |
 | 2 | HW model: unit and memory slots, residency, event log | |
 | 3 | Simulator + FIFO scheduler, deadlock detection, metrics, lower bound | |
 | 4 | Greedy and memory-aware schedulers, eviction and reload | |
@@ -253,7 +274,7 @@ values from the brief. Unknown keys are rejected. Example:
 matmul_sim/
   trace.py       # trace data model, JSON/CSV I/O, validation
   hw_config.py   # HW parameters and fixed constants
-  translator.py  # matmul -> trace (tiling, padding, deps, orders, ACC shape)
+  translator.py  # matmul -> trace (tiling, padding, deps, ACC groups)
   workloads.py   # named presets: small, medium, large, skewed
 scripts/
   gen_workload.py

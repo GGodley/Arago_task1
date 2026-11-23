@@ -15,10 +15,19 @@ Every op has the same shape:
 
 Arity per type:
 
-    LOAD     srcs = []        dst = tile   (global -> local, DMA)
-    COMPUTE  srcs = [A, B]    dst = P      (P = A x B, matrix unit)
-    ACC      srcs = [S, P]    dst = R      (R = S + P, matrix unit)
-    SAVE     srcs = [R]       dst = None   (local -> global, DMA)
+    LOAD     srcs = []              dst = tile  (global -> local, DMA)
+    COMPUTE  srcs = [A, B]          dst = P     (P = A x B, matrix unit)
+    ACC      srcs = [P0, ..., Pn-1] dst = C     (C = P0 + ... + Pn-1, n >= 2)
+    SAVE     srcs = [C]             dst = None  (local -> global, DMA)
+
+ACC is a *reduction group*, not a single hardware command. It lists every
+partial that sums into one output tile and leaves the pairing open, because
+the translator does not know how many matrix units there are. At run time
+the group expands into n-1 binary ACC commands (1 tick each on a matrix
+unit). Each command adds any two tiles of the group that are ready (partials
+or earlier sums), writes a new tile and frees its two inputs. The last one
+writes dst. So an ACC group's deps are satisfied incrementally: work can start
+as soon as two of its srcs exist, not when all of them do.
 
 Tiles are named by strings and each tile is written by exactly one op
 (single assignment). Every src must be produced by an op listed in deps.
@@ -48,12 +57,12 @@ class OpType(str, Enum):
         return "dma" if self in (OpType.LOAD, OpType.SAVE) else "matrix"
 
 
-# (number of srcs, whether dst is required)
+# (min srcs, max srcs or None for unbounded, whether dst is required)
 _ARITY = {
-    OpType.LOAD: (0, True),
-    OpType.COMPUTE: (2, True),
-    OpType.ACC: (2, True),
-    OpType.SAVE: (1, False),
+    OpType.LOAD: (0, 0, True),
+    OpType.COMPUTE: (2, 2, True),
+    OpType.ACC: (2, None, True),
+    OpType.SAVE: (1, 1, False),
 }
 
 
@@ -99,9 +108,17 @@ class Trace:
 
     # ---- queries -------------------------------------------------------
     def op_counts(self) -> dict[str, int]:
+        """Number of trace records per type (an ACC group counts once)."""
         counts = {t.value: 0 for t in OpType}
         for op in self.ops:
             counts[op.type.value] += 1
+        return counts
+
+    def hw_op_counts(self) -> dict[str, int]:
+        """Number of hardware commands per type: an ACC group of n srcs is n-1 ACCs."""
+        counts = {t.value: 0 for t in OpType}
+        for op in self.ops:
+            counts[op.type.value] += len(op.srcs) - 1 if op.type is OpType.ACC else 1
         return counts
 
     def by_id(self) -> dict[int, Op]:
@@ -119,9 +136,13 @@ class Trace:
                 errors.append(f"duplicate op id {op.id}")
             ids[op.id] = op
 
-            n_srcs, needs_dst = _ARITY[op.type]
-            if len(op.srcs) != n_srcs:
-                errors.append(f"op {op.id} ({op.type.value}): expected {n_srcs} srcs, got {len(op.srcs)}")
+            lo, hi, needs_dst = _ARITY[op.type]
+            n = len(op.srcs)
+            if n < lo or (hi is not None and n > hi):
+                want = f"{lo}" if lo == hi else f"at least {lo}"
+                errors.append(f"op {op.id} ({op.type.value}): expected {want} srcs, got {n}")
+            if len(set(op.srcs)) != n:
+                errors.append(f"op {op.id} ({op.type.value}): repeated src")
             if needs_dst and not op.dst:
                 errors.append(f"op {op.id} ({op.type.value}): missing dst")
             if not needs_dst and op.dst:

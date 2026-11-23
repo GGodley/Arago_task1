@@ -5,9 +5,7 @@ from pathlib import Path
 import pytest
 
 from matmul_sim import OpType, load_trace
-from matmul_sim.translator import (
-    MatmulSpec, acc_depth, expected_op_counts, output_order, translate,
-)
+from matmul_sim.translator import MatmulSpec, expected_op_counts, translate
 from matmul_sim.workloads import PRESETS, all_presets, get_preset
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -15,19 +13,20 @@ SHAPES = [(64, 64, 64), (64, 128, 64), (128, 128, 128), (192, 64, 320), (100, 20
 
 
 @pytest.mark.parametrize("mkn", SHAPES)
-@pytest.mark.parametrize("acc", ["chain", "tree"])
-@pytest.mark.parametrize("order", ["row", "snake", "blocked"])
-def test_valid_and_counts_match_formula(mkn, acc, order):
+def test_valid_and_counts_match_formula(mkn):
     spec = MatmulSpec(*mkn)
-    t = translate(spec, order=order, acc=acc, block=(2, 2))
+    t = translate(spec)
     t.validate()
-    assert t.op_counts() == expected_op_counts(*spec.tiles)
+    Mt, Kt, Nt = spec.tiles
+    assert t.hw_op_counts() == expected_op_counts(Mt, Kt, Nt)
+    # One ACC group per output tile when Kt > 1, none otherwise.
+    assert t.op_counts()["ACC"] == (Mt * Nt if Kt > 1 else 0)
 
 
 def test_matches_hand_written_example():
-    # Same ops, possibly in a different program order (the translator loads lazily).
     hand = load_trace(ROOT / "examples" / "mm_64x128x64.json")
     gen = translate(MatmulSpec(64, 128, 64))
+    # Same ops; program order may differ (the translator loads lazily).
     assert {(o.type, o.srcs, o.dst) for o in gen.ops} == {(o.type, o.srcs, o.dst) for o in hand.ops}
 
 
@@ -37,6 +36,23 @@ def test_single_tile():
     assert t.ops[-1].srcs == ("P_0_0_0",)
 
 
+def test_kt1_has_no_acc():
+    assert translate(MatmulSpec(256, 64, 256)).op_counts()["ACC"] == 0
+
+
+def test_acc_group_lists_all_partials_without_pairing():
+    t = translate(MatmulSpec(64, 5 * 64, 64))  # Kt = 5
+    accs = [op for op in t.ops if op.type is OpType.ACC]
+    assert len(accs) == 1
+    acc = accs[0]
+    assert acc.srcs == tuple(f"P_0_0_{k}" for k in range(5))
+    assert acc.dst == "C_0_0"
+    computes = [op.id for op in t.ops if op.type is OpType.COMPUTE]
+    assert acc.deps == tuple(computes)
+    assert t.ops[-1].srcs == ("C_0_0",)
+    assert t.hw_op_counts()["ACC"] == 4
+
+
 def test_padding():
     spec = MatmulSpec(100, 200, 300)
     assert spec.tiles == (2, 4, 5)
@@ -44,65 +60,19 @@ def test_padding():
     assert MatmulSpec(128, 128, 128).useful_fraction == 1.0
 
 
-def test_kt1_has_no_acc():
-    t = translate(MatmulSpec(256, 64, 256))
-    assert t.op_counts()["ACC"] == 0
-
-
-def test_chain_acc_is_sequential():
-    t = translate(MatmulSpec(64, 256, 64), acc="chain")
-    accs = [op for op in t.ops if op.type is OpType.ACC]
-    assert [op.dst for op in accs] == ["S_0_0_1", "S_0_0_2", "S_0_0_3"]
-    assert accs[1].srcs[0] == "S_0_0_1" and accs[2].srcs[0] == "S_0_0_2"
-
-
-def test_tree_acc_shape():
-    t = translate(MatmulSpec(64, 5 * 64, 64), acc="tree")  # Kt = 5
-    accs = [op for op in t.ops if op.type is OpType.ACC]
-    assert [op.dst for op in accs] == ["T_0_0_0_0", "T_0_0_0_1", "T_0_0_1_0", "T_0_0_2_0"]
-    assert accs[-1].srcs == ("T_0_0_1_0", "P_0_0_4")
-    assert t.ops[-1].srcs == ("T_0_0_2_0",)
-
-
-@pytest.mark.parametrize("kt, chain, tree", [(1, 0, 0), (2, 1, 1), (5, 4, 3), (8, 7, 3), (64, 63, 6)])
-def test_acc_depth(kt, chain, tree):
-    assert acc_depth(kt, "chain") == chain
-    assert acc_depth(kt, "tree") == tree
-
-
-def test_each_input_loaded_once_and_before_use():
-    t = translate(MatmulSpec(256, 256, 256), order="snake")
+def test_each_input_loaded_once_and_producers_first():
+    t = translate(MatmulSpec(256, 256, 256))
     loads = [op.dst for op in t.ops if op.type is OpType.LOAD]
-    assert len(loads) == len(set(loads))
-    for op in t.ops:  # program order: producers come before consumers
+    assert len(loads) == len(set(loads)) == 2 * 4 * 4
+    for op in t.ops:
         assert all(d < op.id for d in op.deps)
 
 
-@pytest.mark.parametrize("order, expected", [
-    ("row", [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]),
-    ("snake", [(0, 0), (0, 1), (0, 2), (1, 2), (1, 1), (1, 0)]),
-])
-def test_output_orders(order, expected):
-    assert list(output_order(2, 3, order)) == expected
-
-
-def test_blocked_order():
-    got = list(output_order(3, 3, "blocked", (2, 2)))
-    assert got == [(0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (1, 2), (2, 0), (2, 1), (2, 2)]
-    assert sorted(got) == sorted(output_order(3, 3, "row"))
-
-
 def test_metadata():
-    w = translate(MatmulSpec(100, 200, 300), order="blocked", block=(2, 3)).workload
+    w = translate(MatmulSpec(100, 200, 300)).workload
     assert (w["Mt"], w["Kt"], w["Nt"]) == (2, 4, 5)
     assert w["footprint_tiles"] == 2 * 4 + 4 * 5 + 2 * 5
-    assert w["block"] == [2, 3]
-
-
-@pytest.mark.parametrize("bad", [dict(order="zigzag"), dict(acc="fused"), dict(order="blocked", block=(0, 2))])
-def test_bad_options(bad):
-    with pytest.raises(ValueError):
-        translate(MatmulSpec(128, 128, 128), **bad)
+    assert "order" not in w and "acc" not in w
 
 
 @pytest.mark.parametrize("mkn", [(0, 64, 64), (64, -1, 64), (64, 64, 1.5)])
@@ -125,8 +95,8 @@ def test_cli_writes_valid_traces(tmp_path):
         subprocess.run([sys.executable, str(ROOT / "scripts" / "gen_workload.py"),
                         "--mkn", "100", "200", "300", "--format", fmt, "--out", str(out)],
                        check=True, capture_output=True)
-        assert load_trace(out).op_counts() == expected_op_counts(2, 4, 5)
+        assert load_trace(out).hw_op_counts() == expected_op_counts(2, 4, 5)
     subprocess.run([sys.executable, str(ROOT / "scripts" / "gen_workload.py"),
-                        "--preset", "small", "--order", "snake", "--outdir", str(tmp_path / "d")],
-                       check=True, capture_output=True)
+                    "--preset", "small", "--outdir", str(tmp_path / "d")],
+                   check=True, capture_output=True)
     assert len(list((tmp_path / "d").glob("*.json"))) == 3
