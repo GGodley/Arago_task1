@@ -28,6 +28,20 @@ def test_op_counts():
     assert small_trace().op_counts() == {"LOAD": 2, "COMPUTE": 1, "ACC": 0, "SAVE": 1}
 
 
+def test_acc_group_counts():
+    t = Trace([
+        Op(0, OpType.LOAD, (), "A"), Op(1, OpType.LOAD, (), "B"),
+        Op(2, OpType.COMPUTE, ("A", "B"), "P0", (0, 1)),
+        Op(3, OpType.COMPUTE, ("A", "B"), "P1", (0, 1)),
+        Op(4, OpType.COMPUTE, ("A", "B"), "P2", (0, 1)),
+        Op(5, OpType.ACC, ("P0", "P1", "P2"), "C", (2, 3, 4)),
+        Op(6, OpType.SAVE, ("C",), None, (5,)),
+    ])
+    t.validate()
+    assert t.op_counts()["ACC"] == 1
+    assert t.hw_op_counts() == {"LOAD": 2, "COMPUTE": 3, "ACC": 2, "SAVE": 1}
+
+
 def test_units():
     assert OpType.LOAD.unit == OpType.SAVE.unit == "dma"
     assert OpType.COMPUTE.unit == OpType.ACC.unit == "matrix"
@@ -55,6 +69,8 @@ def test_json_and_csv_examples_match():
 
 @pytest.mark.parametrize("bad, message", [
     (Op(2, OpType.COMPUTE, ("A_0_0",), "P_0_0_0", (0,)), "expected 2 srcs"),
+    (Op(2, OpType.ACC, ("A_0_0",), "P_0_0_0", (0,)), "expected at least 2 srcs"),
+    (Op(2, OpType.ACC, ("A_0_0", "A_0_0"), "P_0_0_0", (0,)), "repeated src"),
     (Op(2, OpType.COMPUTE, ("A_0_0", "B_0_0"), None, (0, 1)), "missing dst"),
     (Op(3, OpType.SAVE, ("P_0_0_0",), "X", (2,)), "must not have a dst"),
     (Op(2, OpType.COMPUTE, ("A_0_0", "B_0_0"), "P_0_0_0", (0,)), "not in deps"),
