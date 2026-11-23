@@ -33,6 +33,11 @@ header p { margin: 4px 0 0; color: var(--ink2); max-width: 75ch }
 .deck { display: grid; gap: 18px }
 .wl { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end }
 .wl select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); min-width: 0; max-width: 100% }
+.own { display: grid; gap: 4px; min-width: 0 }
+.dims { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
+.dims label { font-family: var(--mono); font-size: 12px; color: var(--ink2) }
+.dims input { font: inherit; font-family: var(--mono); width: 6.5em; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--ink) }
+.dims input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--ink2); font-size: 13px }
 .facts b { color: var(--ink); font-weight: 500 }
 .slider { display: grid; gap: 8px }
@@ -76,7 +81,7 @@ footer { color: var(--ink2); font-size: 12.5px; max-width: 95ch }
 <div class="wrap">
   <header>
     <h1>Tile Engine Sizer</h1>
-    <p>Pick a matmul, then click along the two sliders. Speed sets how many matrix units you need; memory sets how many DMA units it takes to keep them fed. Steps that can't work together grey out. Everything below comes from the mathematical model.</p>
+    <p>Pick a matmul or type your own dimensions, then click along the two sliders. Speed sets how many matrix units you need; memory sets how many DMA units it takes to keep them fed. Steps that can't work together grey out. Everything below comes from the mathematical model.</p>
   </header>
 
   <section class="panel deck" aria-label="Controls">
@@ -85,8 +90,17 @@ footer { color: var(--ink2); font-size: 12.5px; max-width: 95ch }
         <label class="label" for="wl">Workload</label>
         <select id="wl"></select>
       </div>
-      <div class="facts" id="facts"></div>
+      <form class="own" id="own" novalidate>
+        <span class="label">Or your own (elements)</span>
+        <div class="dims">
+          <label for="dimM">M</label><input id="dimM" type="number" min="1" max="16384" step="1" value="3000" inputmode="numeric">
+          <label for="dimK">K</label><input id="dimK" type="number" min="1" max="16384" step="1" value="5000" inputmode="numeric">
+          <label for="dimN">N</label><input id="dimN" type="number" min="1" max="16384" step="1" value="700" inputmode="numeric">
+          <button class="btn on" type="submit">Size it</button>
+        </div>
+      </form>
     </div>
+    <div class="facts" id="facts"></div>
 
     <div class="slider">
       <div class="slider-head">
@@ -135,6 +149,7 @@ footer { color: var(--ink2); font-size: 12.5px; max-width: 95ch }
   </footer>
 </div>
 
+<script src="model.js"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -188,7 +203,7 @@ footer { color: var(--ink2); font-size: 12.5px; max-width: 95ch }
 
   function render() {
     const g = W(), c = cell(st.si, st.mi);
-    $("facts").innerHTML = `<span><b>${g.M}×${g.K}×${g.N}</b> = ${g.m}×${g.k}×${g.n} tiles</span>
+    $("facts").innerHTML = `<span><b>${g.M}×${g.K}×${g.N}</b> = ${g.m}×${g.k}×${g.n} tiles${(g.M % 64 || g.K % 64 || g.N % 64) ? " (edges padded to whole tiles)" : ""}</span>
       <span>matrix ops W <b class="mono">${g.W.toLocaleString()}</b></span>
       <span>SAVEs <b class="mono">${g.SAVE.toLocaleString()}</b></span>
       <span>LOADs at best <b class="mono">${g.LOAD_min.toLocaleString()}</b></span>`;
@@ -201,7 +216,9 @@ footer { color: var(--ink2); font-size: 12.5px; max-width: 95ch }
     const tj = firstFeasibleMem(st.si), cj = compactMem(st.si);
     $("tiny").classList.toggle("on", st.mi === tj);
     $("compact").classList.toggle("on", st.mi === cj);
-    $("note").textContent = note || (tj === cj ? "This workload has no memory dial at this speed: Tiny and Compact are the same." : "");
+    const flat = g.s_sat[st.si] / g.s_min[st.si] < 1.25;
+    $("note").textContent = note || (flat ? "This workload has no memory dial at this speed: one tiling is the only sensible choice, so Tiny and Compact are the same."
+      : tj === cj ? `At this speed Tiny and Compact land on the same memory step (least ${Math.ceil(g.s_min[st.si])}, balanced ${Math.round(Math.sqrt(g.s_min[st.si] * g.s_sat[st.si]))} tiles).` : "");
     const lim = c.limiter;
     $("kpis").innerHTML = [
       ["Matrix units Nm", c.Nm, "set by the speed"],
@@ -272,18 +289,37 @@ footer { color: var(--ink2); font-size: 12.5px; max-width: 95ch }
 
   $("tiny").onclick = () => { st.mi = firstFeasibleMem(st.si); note = ""; render() };
   $("compact").onclick = () => { st.mi = compactMem(st.si); note = ""; render() };
-  $("wl").onchange = e => {
-    st.w = +e.target.value; const g = W();
-    st.si = Math.min(g.speeds.length - 1, Math.floor(g.speeds.length / 2)); st.mi = compactMem(st.si); note = ""; render();
-  };
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
   mq.addEventListener && mq.addEventListener("change", () => DATA.length && render());
   new MutationObserver(() => DATA.length && render()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-  fetch("data.json").then(r => r.json()).then(d => {
-    DATA = d;
-    $("wl").innerHTML = d.map((g, i) => `<option value="${i}">${g.name}</option>`).join("");
-    $("wl").value = st.w; st.mi = compactMem(st.si); render();
-  }).catch(() => { $("note").textContent = "Could not load the model's results (data.json)." });
+  const PRESETS = [
+    ["128³ (small)", 128, 128, 128], ["256³ (small)", 256, 256, 256],
+    ["512³ (medium)", 512, 512, 512], ["1024³ (medium)", 1024, 1024, 1024],
+    ["2048³ (large)", 2048, 2048, 2048], ["4096³ (large)", 4096, 4096, 4096],
+    ["LLM decode 64×4096×4096", 64, 4096, 4096], ["Wide, short K 4096×64×4096", 4096, 64, 4096],
+    ["Long K 64×8192×64", 64, 8192, 64], ["Padded 100×200×300", 100, 200, 300],
+  ];
+  const category = (M, K, N) => { const d = Math.max(M, K, N); return d <= 256 ? "small" : d <= 1024 ? "medium" : "large" };
+  const cache = {};
+  const load = i => (cache[i] = cache[i] || (i < PRESETS.length ? MODEL.grid(PRESETS[i][1], PRESETS[i][2], PRESETS[i][3], PRESETS[i][0]) : null));
+  DATA = new Proxy([], { get: (_, i) => (i === "length" ? PRESETS.length + 1 : cache[i] || load(+i)) });
+  const options = () => {
+    const custom = cache[PRESETS.length];
+    $("wl").innerHTML = PRESETS.map((g, i) => `<option value="${i}">${g[0]}</option>`).join("") +
+      (custom ? `<option value="${PRESETS.length}">${custom.name}</option>` : "");
+    $("wl").value = st.w;
+  };
+  const start = () => { const g = W(); st.si = Math.min(g.speeds.length - 1, Math.floor(g.speeds.length / 2)); st.mi = compactMem(st.si); note = ""; render() };
+  $("own").onsubmit = e => {
+    e.preventDefault();
+    const v = ["dimM", "dimK", "dimN"].map(id => Math.round(+$(id).value));
+    if (v.some(x => !(x >= 1 && x <= 16384))) { $("note").textContent = "Each dimension must be a whole number from 1 to 16,384."; return }
+    const [M, K, N] = v;
+    cache[PRESETS.length] = MODEL.grid(M, K, N, `Your matmul ${M}×${K}×${N} (${category(M, K, N)})`);
+    st.w = PRESETS.length; options(); start();
+  };
+  $("wl").onchange = e => { st.w = +e.target.value; start() };
+  options(); start();
 })();
 </script>

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Precompute the dashboard's speed x memory grid for the preset workloads (writes app/data.json).
+"""Python reference for the dashboard grid (writes app/data.json). The page itself computes
+the same grid in model.js, a line-for-line port; this output is what the port is checked against.
 
     python Mathematical_foundation/app/build_data.py
 then serve the folder:  python -m http.server -d Mathematical_foundation/app 8000
