@@ -1,0 +1,90 @@
+{
+ "format_version": 1,
+ "workload": {
+  "name": "mm_64x128x64",
+  "M": 64,
+  "K": 128,
+  "N": 64,
+  "tile": 64
+ },
+ "ops": [
+  {
+   "id": 0,
+   "type": "LOAD",
+   "srcs": [],
+   "dst": "A_0_0",
+   "deps": []
+  },
+  {
+   "id": 1,
+   "type": "LOAD",
+   "srcs": [],
+   "dst": "B_0_0",
+   "deps": []
+  },
+  {
+   "id": 2,
+   "type": "LOAD",
+   "srcs": [],
+   "dst": "A_0_1",
+   "deps": []
+  },
+  {
+   "id": 3,
+   "type": "LOAD",
+   "srcs": [],
+   "dst": "B_1_0",
+   "deps": []
+  },
+  {
+   "id": 4,
+   "type": "COMPUTE",
+   "srcs": [
+    "A_0_0",
+    "B_0_0"
+   ],
+   "dst": "P_0_0_0",
+   "deps": [
+    0,
+    1
+   ]
+  },
+  {
+   "id": 5,
+   "type": "COMPUTE",
+   "srcs": [
+    "A_0_1",
+    "B_1_0"
+   ],
+   "dst": "P_0_0_1",
+   "deps": [
+    2,
+    3
+   ]
+  },
+  {
+   "id": 6,
+   "type": "ACC",
+   "srcs": [
+    "P_0_0_0",
+    "P_0_0_1"
+   ],
+   "dst": "S_0_0_1",
+   "deps": [
+    4,
+    5
+   ]
+  },
+  {
+   "id": 7,
+   "type": "SAVE",
+   "srcs": [
+    "S_0_0_1"
+   ],
+   "dst": null,
+   "deps": [
+    6
+   ]
+  }
+ ]
+}

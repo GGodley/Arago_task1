@@ -1,0 +1,8 @@
+{
+  "n_dma": 2,
+  "n_matrix": 2,
+  "local_mem_tiles": 16,
+  "tick_cycles": 128,
+  "matrix_ticks": 1,
+  "dma_ticks": 4
+}

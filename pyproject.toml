@@ -1,0 +1,15 @@
+[project]
+name = "matmul_sim"
+version = "0.1.0"
+description = "Performance model for blocked matmul on a DMA + matrix-unit accelerator (Arago Task 1)"
+requires-python = ">=3.10"
+dependencies = ["numpy", "matplotlib"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["matmul_sim"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
