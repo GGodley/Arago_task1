@@ -16,6 +16,9 @@ Mathematical_foundation/
 │   └── equations.md          the model's equations and what each variable means
 ├── foundation/               reusable closed-form code (no plotting, no I/O)
 │   ├── counts.py             instruction counts and LOADs under limited memory
+│   ├── timing.py             total time T for a workload and hardware setup
+│   ├── parallelism.py        tilings with their memory need and independent-work cap
+│   ├── profile.py            matrix usage, DMA usage and memory over time
 │   └── plotting.py           shared figure style for every experiment
 ├── experiments/              one numbered folder per experiment
 │   ├── 01_instruction_counts/
@@ -55,4 +58,5 @@ python -m pytest Mathematical_foundation/tests
 | 03 | [Timing vs units](experiments/03_timing_vs_units/): heatmaps of time over DMA and matrix unit counts | done |
 | 04 | [Balanced overhead](experiments/04_balanced_overhead/): DMA vs memory with the overlap overhead of balanced unit counts | done |
 | 05 | [Work cap and time target](experiments/05_work_cap_and_time_target/): independent-work cap; cheapest setup under a time target | done |
-| 06 | Optimizer: cheapest (Nd, Nm, S) for a workload and time target | planned |
+| 06 | [Model vs simulator](experiments/06_model_vs_simulator/): cycles, usage and memory over time on small, medium, large and LLM decode examples | done |
+| 07 | Optimizer: cheapest (Nd, Nm, S) for a workload and time target | planned |

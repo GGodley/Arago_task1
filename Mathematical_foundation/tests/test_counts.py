@@ -57,3 +57,18 @@ def test_tilings_match_loads_and_cap():
         assert min(t.loads for t in ts if t.need <= S) == loads_with_memory(4096, 4096, 4096, S)
     b = next(t for t in ts if t.name == "block4x5")
     assert b.open == 20 and b.cap == 40
+
+
+def test_profile_areas_match_counted_work():
+    """Area under the usage curves equals the counted work (Step 1)."""
+    import numpy as np
+
+    from foundation.profile import profile
+
+    for M, nd, nm, S in [(512, 8, 4, 128), (1024, 16, 16, 256)]:
+        p = profile(M, M, M, nd, nm, S, points=20000)
+        m = M // 64
+        W = m * m * (2 * m - 1)
+        busy = np.trapezoid(p["mat_pct"] / 100 * nm, p["t"])
+        assert busy == pytest.approx(W, rel=0.02)
+        assert p["mem_tiles"].max() <= S
