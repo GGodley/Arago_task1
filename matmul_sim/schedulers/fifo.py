@@ -36,6 +36,7 @@ class FIFOScheduler(Scheduler):
 
     def candidates(self, sim: "Simulator") -> Iterator[Command]:
         skipped: list[tuple[int, int, Command]] = []
+        current = None
         try:
             while True:
                 best = None
@@ -50,11 +51,14 @@ class FIFOScheduler(Scheduler):
                         best = kind
                 if best is None:
                     return
-                item = heapq.heappop(self._heaps[best])
-                yield item[2]
-                if not item[2].issued:
-                    skipped.append(item)
+                current = heapq.heappop(self._heaps[best])
+                yield current[2]
+                if not current[2].issued:
+                    skipped.append(current)
+                current = None
         finally:
+            if current is not None and not current[2].issued:
+                skipped.append(current)
             for item in skipped:
                 heapq.heappush(self._heaps[item[2].kind], item)
 

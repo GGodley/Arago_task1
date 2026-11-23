@@ -15,7 +15,9 @@ Protocol (all calls come from the simulator):
                             simulator closes the generator when it is done
                             (all units busy, or nothing left to try).
     pair(sim, group, avail) choose two of the ready tiles of an ACC group
-    victim(sim, candidates) choose a tile to evict, or None to not evict
+    victim(sim, candidates, cmd)
+                            memory is full and cmd needs a slot: choose an
+                            input tile to evict, or None to not evict
 
 Inside candidates(), the scheduler should skip commands that cannot run:
 those whose unit pool is full (sim.hw.pool(unit).free_count == 0) and, once
@@ -86,6 +88,6 @@ class Scheduler:
         """Default: the two tiles that became ready first."""
         return avail[0], avail[1]
 
-    def victim(self, sim: "Simulator", candidates: list[str]) -> str | None:
+    def victim(self, sim: "Simulator", candidates: list[str], cmd: Command) -> str | None:
         """Default: never evict (the run deadlocks if memory fills with inputs)."""
         return None

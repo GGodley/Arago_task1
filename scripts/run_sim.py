@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from matmul_sim import HWConfig, load_trace  # noqa: E402
-from matmul_sim.schedulers import SCHEDULERS, make_scheduler  # noqa: E402
+from matmul_sim.schedulers import ORDERS, SCHEDULERS, make_scheduler  # noqa: E402
 from matmul_sim.simulator import simulate  # noqa: E402
 from matmul_sim.translator import MatmulSpec, translate  # noqa: E402
 from matmul_sim.workloads import all_presets  # noqa: E402
@@ -34,7 +34,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--nd", type=int, default=2, help="DMA units")
     p.add_argument("--nm", type=int, default=2, help="matrix units")
     p.add_argument("--mem", type=int, default=16, help="local memory in tiles")
-    p.add_argument("--scheduler", choices=sorted(SCHEDULERS), default="fifo")
+    p.add_argument("--scheduler", choices=sorted(SCHEDULERS), default="memaware")
+    p.add_argument("--order", choices=ORDERS, default="row", help="tile order for greedy/memaware")
+    p.add_argument("--block", type=int, default=4, help="block size for --order blocked")
     p.add_argument("--json", type=Path, help="write the summary and memory series to this file")
     args = p.parse_args(argv)
 
@@ -50,10 +52,12 @@ def main(argv: list[str] | None = None) -> int:
 
     hw = HWConfig.from_json(args.hw) if args.hw else HWConfig(args.nd, args.nm, args.mem)
     t0 = time.perf_counter()
-    r = simulate(trace, hw, make_scheduler(args.scheduler))
+    r = simulate(trace, hw, make_scheduler(args.scheduler, args.order, args.block))
     elapsed = time.perf_counter() - t0
 
     status = "completed" if r.completed else ("DEADLOCK" if r.deadlock else "STALLED")
+    if r.infeasible_memory:
+        status += f" (memory below the {r.min_mem_tiles}-tile minimum)"
     print(f"{r.workload} on {hw.label} with {r.scheduler}: {status} in {elapsed:.2f}s")
     print(f"  total          {r.total_ticks} ticks = {r.total_cycles} cycles")
     print(f"  lower bound    {r.bound.ticks} ticks ({r.bound.limiter}-bound), ratio {r.bound_ratio:.3f}")

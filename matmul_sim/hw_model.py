@@ -71,13 +71,14 @@ class UnitPool:
         self.kind = kind
         self.n = n
         self._slots: list[_Slot | None] = [None] * n
+        self._free = n
         self.history: list[BusyInterval] = []
         self.busy_ticks = 0
 
     # -- queries --
     @property
     def free_count(self) -> int:
-        return sum(s is None for s in self._slots)
+        return self._free
 
     @property
     def busy_count(self) -> int:
@@ -100,6 +101,7 @@ class UnitPool:
         for i, s in enumerate(self._slots):
             if s is None:
                 self._slots[i] = _Slot(cmd, now, now + duration)
+                self._free -= 1
                 return i
         raise HWError(f"{self.kind}: no free unit for command {cmd}")
 
@@ -111,6 +113,7 @@ class UnitPool:
         if s.end != now:
             raise HWError(f"{self.kind}: command {s.cmd} ends at {s.end}, not {now}")
         self._slots[slot] = None
+        self._free += 1
         self.history.append(BusyInterval(self.kind, slot, s.cmd, s.start, s.end))
         self.busy_ticks += s.end - s.start
         return s.cmd
