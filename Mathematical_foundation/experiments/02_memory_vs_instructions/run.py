@@ -48,6 +48,7 @@ def plot(rows, out: Path) -> None:
     S0 = no_reload_memory(N)
     xs = [r["S"] for r in rows]
     fig, ax = new_figure()
+    fig.set_size_inches(9, 6.2)
     ax.fill_between(xs, [r["DMA_perfect_reuse"] for r in rows], [r["DMA_no_reuse"] for r in rows],
                     color=ORANGE, alpha=0.07, linewidth=0)
     ax.plot(xs, [r["MAC_total"] for r in rows], color=BLUE, linewidth=2.6, label="MAC instructions (COMPUTE + ACC)")
@@ -57,9 +58,11 @@ def plot(rows, out: Path) -> None:
             label="DMA, perfect reuse (floor)")
     ax.plot(xs, [r["DMA_at_S"] for r in rows], color=ORANGE, linewidth=2.8, marker="o", markersize=4.5,
             label="DMA with S tiles of local memory (ideal tiling)")
-    ax.axvline(S0, color=INK2, linewidth=0.9, linestyle=(0, (4, 4)))
-    ax.annotate(f"S₀ = {S0:,} tiles:\nno reloads\nbeyond here", (S0, (rows[0]["DMA_no_reuse"] * rows[0]["DMA_perfect_reuse"]) ** 0.5), xytext=(8, 0),
-                textcoords="offset points", ha="left", color=INK2, fontsize=10)
+    if xs[0] < S0 <= xs[-1]:
+        ax.axvline(S0, color=INK2, linewidth=0.9, linestyle=(0, (4, 4)))
+        ax.annotate(f"S\u2080 = {S0:,} tiles:\nno reloads\nbeyond here",
+                    (S0, (rows[0]["DMA_no_reuse"] * rows[0]["DMA_perfect_reuse"]) ** 0.5), xytext=(8, 0),
+                    textcoords="offset points", ha="left", color=INK2, fontsize=10)
     last = rows[-1]
     x_end = xs[-1]
     label_end(ax, x_end, last["DMA_no_reuse"], f"DMA no reuse {last['DMA_no_reuse']:,}", ORANGE, 9)
@@ -67,7 +70,7 @@ def plot(rows, out: Path) -> None:
     label_end(ax, x_end, last["DMA_perfect_reuse"], f"DMA perfect reuse {last['DMA_perfect_reuse']:,}", ORANGE)
     # call out a few points on the curve
     for r in rows:
-        if r["S"] in (16, 256):
+        if r["S"] in (16, 256) and r["DMA_at_S"] > r["DMA_perfect_reuse"] and r["S"] < S0:
             ax.annotate(f"S = {r['S']}: {r['DMA_at_S']:,}\n(reuse {r['reuse_at_S']:.0f}×)", (r["S"], r["DMA_at_S"]),
                         xytext=(10, 10), textcoords="offset points", color=INK, fontsize=9)
     ax.set_xscale("log", base=2)
@@ -77,16 +80,24 @@ def plot(rows, out: Path) -> None:
     ax.set_xticklabels([f"{s:,}" if s < 1000 else f"{s // 1024}K" for s in ticks], fontsize=9)
     ax.set_xlim(xs[0] / 1.3, xs[-1] * 9)
     first = rows[0]
-    frame(ax, f"{N}³: memory takes DMA from {first['DMA_at_S'] / last['DMA_at_S']:.0f}× the floor down to the floor; MAC never moves",
-          "Instructions per matmul vs local memory. DMA falls ~1/√S (reuse ≈ √S − 1) until a whole panel fits.",
-          "Local memory S (tiles, log scale)", "Instruction count (log scale)")
-    lo = min(r["DMA_perfect_reuse"] for r in rows)
-    hi = max(r["DMA_no_reuse"] for r in rows)
+    swing = first["DMA_at_S"] / last["DMA_at_S"]
+    if swing < 1.01:
+        title = (f"{N}\u00b3: nothing to reuse, so memory changes nothing "
+                 f"(DMA {last['DMA_at_S']:,}, MAC {last['MAC_total']:,} at every memory size)")
+        sub = (f"Instructions per matmul vs local memory. The job needs {S0} slots at most; "
+               "every tile is used once, so extra memory sits idle.")
+    else:
+        title = f"{N}\u00b3: memory takes DMA from {swing:.0f}\u00d7 the floor down to the floor; MAC never moves"
+        sub = "Instructions per matmul vs local memory. DMA falls ~1/\u221aS (reuse \u2248 \u221aS \u2212 1) until a whole panel fits."
+    frame(ax, title, sub, "Local memory S (tiles, log scale)", "Instruction count (log scale)")
+    lo = min(min(r["DMA_perfect_reuse"], r["MAC_total"]) for r in rows)
+    hi = max(max(r["DMA_no_reuse"], r["MAC_total"]) for r in rows)
+    ax.set_ylim(lo / 1.6, hi * 1.6)
     yt = [v * 10 ** e for e in range(0, 8) for v in (1, 2, 5) if lo / 1.5 <= v * 10 ** e <= hi * 1.5]
     ax.set_yticks(yt)
     ax.set_yticklabels([f"{v:,.0f}" for v in yt])
     ax.minorticks_off()
-    ax.legend(frameon=False, loc="upper right", bbox_to_anchor=(0.8, 0.86), fontsize=9, labelcolor=INK)
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(0, -0.13), ncol=2, fontsize=9, labelcolor=INK)
     save(fig, out)
 
 
