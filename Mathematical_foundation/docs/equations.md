@@ -32,6 +32,12 @@ All quantities are in tiles (one 64x64 block) or ticks (128 cycles).
     L(S) = min over block, A panel, B panel
     no reloads once S >= S0 = min(m, n) (k + acc) + 2
 
+## Step 2b: overlap overhead (implemented in `foundation/counts.py`)
+
+    O = Nd + 2 Nm - 1       slots kept free so LOAD/SAVE (1 per DMA unit) and
+                            COMPUTE/ACC (2 per matrix unit) can overlap
+    tiling budget:  (bm + 1)(bn + 1) <= S - O,   no reloads once S >= S0 + O
+
 ## Step 3: memory sets concurrency (planned: `foundation/timing.py`)
 
     Little's law:  DMA rate <= min(Nd / Ld, F / tau)
