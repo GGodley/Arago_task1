@@ -54,3 +54,24 @@ Regenerate:
 python run.py                                  # all sizes, Nd = 4 and 16
 python run.py --sizes "4096" --nd "8;32"
 ```
+
+## The fastest setup at each memory size (`fastest.py`)
+
+The curves above fix Nd. `fastest.py` instead searches every (Nd, Nm) at each
+memory size and keeps the fastest, overhead included, with no cost on units.
+
+| S | Nd | Nm | O (% of S) | DMA vs ideal | T (ticks) |
+|---|---|---|---|---|---|
+| 32 | 12 | 6 | 23 (72%) | 2.2× | 88,754 |
+| 256 | 61 | 77 | 214 (84%) | 2.5× | 6,764 |
+| 1,024 | 200 | 372 | 943 (92%) | 2.8× | 1,407 |
+| 8,192 | 760 | 3,445 | 7,649 (93%) | 2.3× | 159 |
+
+- **With units free, memory is the only limit, and time falls as 1/S.**
+- **The fastest setup gives 70 to 93% of memory to overlap** and accepts 2 to
+  3× the DMA traffic of full reuse. Parallel units are worth more than reuse.
+- So "fastest" alone is not a design target: it always means "as many units as
+  memory can hold". A time target or a cost on units is needed to pick a real
+  setup (experiment 05).
+
+Regenerate: `python fastest.py --size 4096`.
