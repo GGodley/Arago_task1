@@ -129,7 +129,10 @@ class SimError(RuntimeError):
 
 
 class Simulator:
-    def __init__(self, trace: Trace, config: HWConfig, scheduler: Scheduler, max_ticks: int | None = None) -> None:
+    def __init__(self, trace: Trace, config: HWConfig, scheduler: Scheduler, max_ticks: int | None = None,
+                 record: bool = True, max_ticks_factor: float | None = None) -> None:
+        """record=False skips the per-command schedule log (sweeps don't need it).
+        max_ticks_factor stops the run once it exceeds that multiple of the lower bound."""
         self.trace = trace
         self.config = config
         self.scheduler = scheduler
@@ -177,6 +180,7 @@ class Simulator:
         self._next_cmd = 0
         self.running: dict[int, Command] = {}  # cmd id -> command
         self.schedule: list[ScheduledCmd] = []
+        self.record = record
 
         # Counters.
         self.ops_done = 0
@@ -186,6 +190,8 @@ class Simulator:
         self.evictions = 0
 
         self.bound = lower_bound(trace, config)
+        if max_ticks is None and max_ticks_factor is not None:
+            max_ticks = int(max_ticks_factor * self.bound.ticks)
         if max_ticks is None:
             hw_cmds = sum(trace.hw_op_counts().values())
             max_ticks = 1000 + 20 * hw_cmds * max(config.dma_ticks, config.matrix_ticks)
@@ -370,8 +376,9 @@ class Simulator:
                     pool.finish(slot, self.now)
                     cmd = self.running.pop(cmd_id)
                     start = pool.history[-1].start
-                    self.schedule.append(ScheduledCmd(start, end, pool.kind, slot, cmd.kind.value, cmd.op_id,
-                                                      cmd.srcs, cmd.dst, cmd.is_reload))
+                    if self.record:
+                        self.schedule.append(ScheduledCmd(start, end, pool.kind, slot, cmd.kind.value, cmd.op_id,
+                                                          cmd.srcs, cmd.dst, cmd.is_reload))
                     self._complete(cmd)
 
     def _complete(self, cmd: Command) -> None:
@@ -427,5 +434,6 @@ def _time_weighted_mean(series: list[tuple[int, int]], end: int) -> float:
     return total / end
 
 
-def simulate(trace: Trace, config: HWConfig, scheduler: Scheduler, max_ticks: int | None = None) -> SimResult:
-    return Simulator(trace, config, scheduler, max_ticks).run()
+def simulate(trace: Trace, config: HWConfig, scheduler: Scheduler, max_ticks: int | None = None,
+             record: bool = True, max_ticks_factor: float | None = None) -> SimResult:
+    return Simulator(trace, config, scheduler, max_ticks, record, max_ticks_factor).run()

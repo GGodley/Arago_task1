@@ -129,6 +129,7 @@ class GreedyReuseScheduler(Scheduler):
         self.focus: set[int] = set()
 
         self.open: set[int] = set()                 # output keys with work started, not saved
+        self.waiting_computes: dict[int, list[Command]] = {}  # ready COMPUTEs pushed before their output opened
         self.ready_loads: dict[str, Command] = {}   # tile -> pending LOAD (or reload) command
         self._heaps: dict[str, list] = {n: [] for n in ("acc", "compute", "save", "hot", "cold")}
         self._seq = itertools.count()
@@ -158,7 +159,10 @@ class GreedyReuseScheduler(Scheduler):
             if self._partner_present(cmd.dst):
                 self._push("hot", self._load_rank(cmd.dst), cmd)
         elif k is OpType.COMPUTE:
-            opened = 0 if self.out_key[cmd.op_id] in self.open else 1
+            key = self.out_key[cmd.op_id]
+            opened = 0 if key in self.open else 1
+            if opened:
+                self.waiting_computes.setdefault(key, []).append(cmd)
             self._push("compute", (opened,) + self.rank[cmd.op_id], cmd)
         elif k is OpType.ACC:
             self._push("acc", self.key_rank.get(cmd.op_id, (cmd.op_id,)), cmd)
@@ -173,7 +177,9 @@ class GreedyReuseScheduler(Scheduler):
             for name in names:
                 if sim.hw.pool(unit).free_count == 0:
                     break
-                if sim.mem_blocked and name != "save":
+                # Urgent loads may evict, so a failed allocation by a command that
+                # may not (opportunistic work) doesn't hold them back.
+                if sim.mem_blocked and name not in ("save", "urgent"):
                     continue
                 if name == "urgent":
                     yield from self._urgent_loads(sim)
@@ -202,6 +208,9 @@ class GreedyReuseScheduler(Scheduler):
                 cmd = item[2]
                 if cmd.issued or self._stale(name, cmd):
                     continue
+                if self._stop_scan(name, item):
+                    skipped.append(item)
+                    break
                 if not self._allowed(cmd, sim):
                     skipped.append(item)
                     continue
@@ -214,6 +223,10 @@ class GreedyReuseScheduler(Scheduler):
                 self._settle(current, skipped)
             for item in skipped:
                 heapq.heappush(heap, item)
+
+    def _stop_scan(self, name: str, item: tuple) -> bool:
+        """True when this item and everything after it in the heap can't be issued now."""
+        return False
 
     def _settle(self, item: tuple, skipped: list) -> None:
         if item[2].issued:
@@ -247,6 +260,10 @@ class GreedyReuseScheduler(Scheduler):
             self.live[key] = self.live.get(key, 0) + 1
             if key not in self.open:
                 self.open.add(key)
+                # Re-rank its other ready COMPUTEs as belonging to an open output.
+                for c in self.waiting_computes.pop(key, ()):
+                    if not c.issued:
+                        self._push("compute", (0,) + self.rank[c.op_id], c)
                 self._update_focus()
 
     # ------------------------------------------------------------- helpers
@@ -308,7 +325,7 @@ class MemoryAwareScheduler(GreedyReuseScheduler):
             # Inputs for the next step of an output in focus always go (evicting
             # if needed; see _urgent_loads); anything else is prefetch and only
             # uses spare room.
-            return self._urgent(cmd.dst) or spare
+            return spare or self._urgent(cmd.dst)
         if cmd.kind is OpType.COMPUTE:
             key = self.out_key[cmd.op_id]
             if key in self.open:
@@ -316,6 +333,15 @@ class MemoryAwareScheduler(GreedyReuseScheduler):
                 return self.live.get(key, 0) <= 1 or spare
             return self._open_count() < self.max_open
         return True
+
+    def _stop_scan(self, name: str, item: tuple) -> bool:
+        # COMPUTEs of outputs not yet open sort last; with the output budget
+        # used up, none of them can start.
+        if name == "compute":
+            return item[0][0] == 1 and self._open_count() >= self.max_open
+        # Prefetch heaps: once spare room is gone, no further prefetch is allowed
+        # (loads the outputs in focus need were already offered by _urgent_loads).
+        return name in ("hot", "cold") and not self._spare(self.sim)
 
     def _spare(self, sim: "Simulator") -> bool:
         return sim.hw.memory.free - 1 >= self.job_slots * max(1, len(self.open))
@@ -334,6 +360,7 @@ class MemoryAwareScheduler(GreedyReuseScheduler):
                 if cmd is not None:
                     wanted.append((self.rank[c], s, cmd))
         current = None  # settled even if the simulator closes us at the yield
+        sim.mem_blocked = False
         try:
             for _, s, cmd in sorted(wanted, key=lambda w: w[0]):
                 if sim.hw.dma.free_count == 0 or sim.mem_blocked:

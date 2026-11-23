@@ -108,3 +108,12 @@ def test_blocked_order_cuts_reloads_when_memory_is_tight():
     blk = simulate(trace, HWConfig(16, 16, 128), make_scheduler("memaware", "blocked"))
     assert row.completed and blk.completed
     assert blk.reloads < row.reloads and blk.total_ticks < row.total_ticks
+
+
+@pytest.mark.parametrize("order, nd, nm, mem", [("row", 1, 2, 32), ("blocked", 1, 1, 16), ("blocked", 1, 1, 32)])
+def test_memaware_single_dma_tight_memory(order, nd, nm, mem):
+    # Regression: an opportunistic COMPUTE that may not evict used to mark memory
+    # blocked and hold back the urgent reloads, deadlocking with one DMA unit.
+    trace, r = sim((512, 512, 512), nd, nm, mem, order=order)
+    assert r.completed, r.stuck
+    check_invariants(trace, r)
