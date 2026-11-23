@@ -35,13 +35,86 @@ sys.path.insert(0, str(HERE.parents[1]))  # Mathematical_foundation/
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import FuncFormatter, LogLocator  # noqa: E402
 
-from foundation import LD, LM, op_counts, tilings  # noqa: E402
+from foundation import LD, LM, in_flight_work, little_memory, op_counts, tilings  # noqa: E402
 from foundation.plotting import AQUA, BLUE, GREYS, GRID, INK, INK2, ORANGE, SURFACE  # noqa: E402
 
 MEMS = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 
 
+OVERHEAD = "little"  # "little" (Little's law, default) or "fixed" (Nd + 2 Nm - 1); set by --overhead
+
+
+def fastest_little(N, mems, capped=True):
+    """Fastest T at each S with the Little's-law memory check.
+
+    For a tiling, memory M = R + X / (T - 2 Ld) with X = in_flight_work, so
+    M <= S gives T >= 2 Ld + X / (S - R). The work cap adds T >= 2 Ld + W / cap.
+    Units are then the fewest that reach that T.
+    """
+    c = op_counts(N, N, N)
+    W = c.COMPUTE + c.ACC
+    rows = []
+    for S in mems:
+        best = None
+        for t in tilings(N, N, N):
+            if t.resident >= S:
+                continue
+            win = max(1.0, in_flight_work(t, c) / (S - t.resident))
+            if capped:
+                win = max(win, W / t.cap)
+            nm = math.ceil(W / win - 1e-9)
+            nd = math.ceil((t.loads + c.SAVE) * LD / win - 1e-9)
+            T = 2 * LD + max(math.ceil(W / nm) * LM, (t.loads + c.SAVE) * LD / nd)
+            key = (round(T, 6), nd + nm)
+            if best is None or key < best[0]:
+                best = (key, t, nd, nm, T)
+        _, t, nd, nm, T = best
+        O = little_memory(t, c, T - 2 * LD) - t.resident
+        rows.append({"S": S, "T": round(T), "Nd": nd, "Nm": nm, "O": round(O, 1), "O_pct": round(100 * O / S, 1),
+                     "tiling": t.name, "open_outputs": t.open, "cap": t.cap, "DMA": t.loads + c.SAVE})
+    return rows
+
+
+def cheapest_little(N, mems, target):
+    """Fewest units with T <= target; a tiling fits when its Little's-law memory M <= S."""
+    c = op_counts(N, N, N)
+    W = c.COMPUTE + c.ACC
+    budget = target - 2 * LD
+    nm = math.ceil(W / budget / LM)
+    ts = [t for t in tilings(N, N, N) if t.cap >= nm]
+    rows = []
+    for S in mems:
+        best = None
+        for t in ts:
+            nd = math.ceil((t.loads + c.SAVE) * LD / budget)
+            M = little_memory(t, c, budget)
+            if M <= S and (best is None or (nd, M) < (best[0], best[2])):
+                best = (nd, t, M)
+        if best is None:
+            rows.append({"S": S, "feasible": False})
+            continue
+        nd, t, M = best
+        O = M - t.resident
+        T = 2 * LD + max(math.ceil(W / nm) * LM, (t.loads + c.SAVE) * LD / nd)
+        rows.append({"S": S, "feasible": True, "Nd": nd, "Nm": nm, "units": nd + nm, "O": round(O, 1),
+                     "O_pct": round(100 * O / S, 1), "T": round(T), "tiling": t.name, "need": round(M, 1),
+                     "resident": t.resident, "cap": t.cap, "DMA": t.loads + c.SAVE})
+    return rows
+
+
 def fastest(N, mems, capped=True):
+    if OVERHEAD == "little":
+        return fastest_little(N, mems, capped)
+    return fastest_fixed(N, mems, capped)
+
+
+def cheapest(N, mems, target):
+    if OVERHEAD == "little":
+        return cheapest_little(N, mems, target)
+    return cheapest_fixed(N, mems, target)
+
+
+def fastest_fixed(N, mems, capped=True):
     c = op_counts(N, N, N)
     W = c.COMPUTE + c.ACC
     ts = tilings(N, N, N)
@@ -75,7 +148,7 @@ def fastest(N, mems, capped=True):
     return rows
 
 
-def cheapest(N, mems, target):
+def cheapest_fixed(N, mems, target):
     c = op_counts(N, N, N)
     W = c.COMPUTE + c.ACC
     budget = target - 2 * LD
@@ -146,9 +219,9 @@ def plot_fastest(N, cap, free, out):
         a1.annotate(f"{r['T']:,}", (r["S"], r["T"]), xytext=(6, 6), textcoords="offset points", fontsize=8, color=INK2)
     a1.set_ylabel("fastest time T (ticks)", color=INK2, fontsize=11)
     a1.legend(frameon=False, fontsize=9, labelcolor=INK)
-    a1.set_title(f"{N}³ at its fastest: the work cap trims the overhead share, but ~80% of memory still goes to it",
+    a1.set_title(f"{N}³ at its fastest: about 70-80% of memory holds tiles in flight",
                  loc="left", color=INK, fontsize=12, pad=26)
-    a1.text(0, 1.03, "Matrix units are capped at 2 × the output tiles open at once; units free, overhead included",
+    a1.text(0, 1.03, "Matrix units capped at 2 × open output tiles; units free; in-flight tiles by Little's law (fixed Nd + 2Nm − 1 with --overhead fixed)",
             transform=a1.transAxes, color=INK2, fontsize=9.5)
     a2.plot(xs, [r["O_pct"] for r in free], color=GREYS[0], lw=1.8, ls="--", marker="o", ms=4, label="no work cap")
     a2.plot(xs, [r["O_pct"] for r in cap], color=BLUE, lw=2.6, marker="o", ms=5, label="with work cap")
@@ -192,13 +265,13 @@ def plot_target(N, rows, target, out):
                  loc="left", color=INK, fontsize=12, pad=26)
     a1.text(0, 1.03, "Cheapest setup (fewest Nd + Nm) at each memory size, with overlap overhead and the work cap",
             transform=a1.transAxes, color=INK2, fontsize=9.5)
-    a2.bar(xs, [r["O_pct"] for r in ok], width=[x * 0.45 for x in xs], color=BLUE, alpha=0.85)
+    a2.bar(xs, [r["O_pct"] for r in ok], width=[x * 0.16 for x in xs], color=BLUE, alpha=0.85)
     for r in ok:
         a2.annotate(f"{r['O_pct']:.0f}%\n({r['O']})", (r["S"], r["O_pct"]), xytext=(0, 4), textcoords="offset points",
                     ha="center", fontsize=8, color=INK2)
     a2.set_ylim(0, 115)
     a2.set_ylabel("overhead, % of memory (slots)", color=INK2, fontsize=11)
-    ticks = [x for x in allx if x == first["S"] or abs(x / first["S"] - 1) > 0.15]
+    ticks = [x for x in allx if x == first["S"] or abs(x / first["S"] - 1) > 0.3]
     a2.set_xticks(ticks, [k_label(x) for x in ticks], fontsize=9)
     a2.minorticks_off()
     a2.set_xlabel("Local memory S (tiles, log scale)", color=INK2, fontsize=11)
@@ -221,19 +294,24 @@ def main():
     ap.add_argument("--target", type=int, default=15000)
     ap.add_argument("--mem", default=";".join(map(str, MEMS)))
     ap.add_argument("--out", default=str(HERE / "outputs"))
+    ap.add_argument("--overhead", choices=["little", "fixed"], default="little",
+                    help="memory check: Little's law (default) or the fixed Nd + 2 Nm - 1")
     a = ap.parse_args()
+    global OVERHEAD
+    OVERHEAD = a.overhead
+    sfx = "" if a.overhead == "little" else "_fixed"
     mems = [int(s) for s in a.mem.split(";")]
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     cap, free = fastest(a.size, mems, True), fastest(a.size, mems, False)
-    plot_fastest(a.size, cap, free, out / f"fastest_capped_{a.size}.png")
-    write([{"capped": True, **r} for r in cap] + [{"capped": False, **r} for r in free], out / f"fastest_capped_{a.size}.csv")
+    plot_fastest(a.size, cap, free, out / f"fastest_capped_{a.size}{sfx}.png")
+    write([{"capped": True, **r} for r in cap] + [{"capped": False, **r} for r in free], out / f"fastest_capped_{a.size}{sfx}.csv")
     smin = min_memory(a.size, a.target, max(mems))
     tmems = sorted(set(mems) | ({smin} if smin else set()))
     tgt = cheapest(a.size, tmems, a.target)
     print("smallest memory that meets the target:", smin)
-    plot_target(a.size, tgt, a.target, out / f"target_{a.target}_{a.size}.png")
-    write(tgt, out / f"target_{a.target}_{a.size}.csv")
+    plot_target(a.size, tgt, a.target, out / f"target_{a.target}_{a.size}{sfx}.png")
+    write(tgt, out / f"target_{a.target}_{a.size}{sfx}.csv")
     print("fastest, capped vs free")
     for r1, r2 in zip(cap, free):
         print(r1, "| free:", r2["T"], r2["Nd"], r2["Nm"], r2["O_pct"])

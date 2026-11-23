@@ -17,13 +17,25 @@ units at
 
 Units above the cap sit idle, but still hold their slots in the overlap
 overhead, so they are pure cost.
+
+Memory the tiling uses (Little's law, quasi-optimal scheduling): slots in use =
+resident tiles + arrival rate x time each in-flight tile holds its slot, over a
+compute window of T - 2 Ld ticks:
+
+    M = R + (L tau + COMPUTE 2 Lm + SAVE Ld) / (T - 2 Ld),   tau = Ld + Lm (1 + acc)
+
+    R, block bm x bn:  acc bm bn      (the running sums; streamed A and B tiles are
+                                       counted in the load term)
+    R, panel p:        p k + acc p    (the whole panel stays, plus its sums)
+
+This replaces the fixed overhead Nd + 2 Nm - 1, which assumed every unit busy.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .counts import cdiv, tiles
+from .counts import OpCounts, cdiv, tiles
 
 
 @dataclass(frozen=True)
@@ -33,6 +45,7 @@ class Tiling:
     loads: int  # LOAD instructions
     open: int   # output tiles open (running sums) at once
     cap: int    # max useful matrix units, (1 + acc) * open
+    resident: int = 0  # tiles held for the whole tiling (Little's-law R)
 
 
 def tilings(M: int, K: int, N: int) -> list[Tiling]:
@@ -48,11 +61,24 @@ def tilings(M: int, K: int, N: int) -> list[Tiling]:
     for bm in range(1, m + 1):
         for bn in range(1, n + 1):
             L = max(floor, k * (m * cdiv(n, bn) + n * cdiv(m, bm)))
-            out.append(Tiling(f"block{bm}x{bn}", (bm + 1) * (bn + 1), L, bm * bn, (1 + acc) * bm * bn))
+            out.append(Tiling(f"block{bm}x{bn}", (bm + 1) * (bn + 1), L, bm * bn, (1 + acc) * bm * bn,
+                              acc * bm * bn))
     for p in range(1, m + 1):
         L = max(floor, m * k + n * k * cdiv(m, p))
-        out.append(Tiling(f"Apanel{p}", p * (k + acc) + 2, L, p, (1 + acc) * p))
+        out.append(Tiling(f"Apanel{p}", p * (k + acc) + 2, L, p, (1 + acc) * p, p * (k + acc)))
     for p in range(1, n + 1):
         L = max(floor, n * k + m * k * cdiv(n, p))
-        out.append(Tiling(f"Bpanel{p}", p * (k + acc) + 2, L, p, (1 + acc) * p))
+        out.append(Tiling(f"Bpanel{p}", p * (k + acc) + 2, L, p, (1 + acc) * p, p * (k + acc)))
     return out
+
+
+def in_flight_work(t: Tiling, c: OpCounts) -> float:
+    """Slot-ticks of in-flight tiles over the whole job; divide by the window for slots."""
+    from .timing import LD, LM
+    acc = 1 if c.ACC else 0
+    return t.loads * (LD + LM * (1 + acc)) + c.COMPUTE * 2 * LM + c.SAVE * LD
+
+
+def little_memory(t: Tiling, c: OpCounts, window: float) -> float:
+    """Memory the tiling uses at steady state over a compute window of `window` ticks."""
+    return t.resident + in_flight_work(t, c) / window

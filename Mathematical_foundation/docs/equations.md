@@ -38,6 +38,14 @@ All quantities are in tiles (one 64x64 block) or ticks (128 cycles).
                             COMPUTE/ACC (2 per matrix unit) can overlap
     tiling budget:  (bm + 1)(bn + 1) <= S - O,   no reloads once S >= S0 + O
 
+  Superseded by the Little's-law check (`foundation/parallelism.py: little_memory`),
+  which counts slots at the rates the schedule actually runs, not with every unit busy:
+
+    M = R + (L tau + COMPUTE 2 Lm + SAVE Ld) / (T - 2 Ld) <= S,   tau = Ld + Lm (1 + acc)
+    R = acc bm bn (block),  p (k + acc) (panel)
+
+  Experiment 05 uses it by default (`--overhead fixed` gives the old check).
+
 ## Step 2c: independent-work cap (implemented in `foundation/parallelism.py`)
 
     Nm_eff <= (1 + acc) * open     open = bm bn (block) or p (panel): output tiles with a running sum in memory

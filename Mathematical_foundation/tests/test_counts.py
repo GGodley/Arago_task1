@@ -72,3 +72,14 @@ def test_profile_areas_match_counted_work():
         busy = np.trapezoid(p["mat_pct"] / 100 * nm, p["t"])
         assert busy == pytest.approx(W, rel=0.02)
         assert p["mem_tiles"].max() <= S
+
+
+def test_little_memory():
+    """Little's-law memory: resident sums plus rate x hold time for in-flight tiles."""
+    from foundation import little_memory, tilings
+
+    c = op_counts(4096, 4096, 4096)
+    t = next(x for x in tilings(4096, 4096, 4096) if x.name == "block13x13")
+    assert t.resident == 169
+    expect = 169 + (t.loads * 6 + c.COMPUTE * 2 + c.SAVE * 4) / 14992
+    assert little_memory(t, c, 14992) == pytest.approx(expect)
