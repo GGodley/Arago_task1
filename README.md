@@ -6,8 +6,9 @@ takes a workload (a trace of operations) and a hardware configuration, and
 reports matrix-unit utilization, local memory occupancy over time and total
 cycles. A sweep script then searches the hardware parameters for each workload.
 
-Status: **Phase 2 (HW model)**. The trace and HW config formats, the
-workload generator and the HW scoreboard are in place. The simulator itself comes in later phases
+Status: **Phase 3 (simulator)**. Workload generator, HW scoreboard,
+event-driven simulator, in-order (FIFO) scheduler and analytical lower bound
+are in place. Smarter schedulers come next. The simulator itself comes in later phases
 (see [Build plan](#build-plan)).
 
 ## Quick start
@@ -133,6 +134,83 @@ the report as a possible HW improvement.
 Processing one output tile strictly in order needs 3 tiles when `Kt = 1` (A, B,
 P) and 4 when `Kt > 1` (running sum, A, B, new partial). Below that a workload
 is infeasible. The memory sweep starts there.
+
+## Running a simulation
+
+```bash
+python scripts/run_sim.py --mkn 512 512 512 --nd 8 --nm 4 --mem 512
+python scripts/run_sim.py --preset small_256 --nd 2 --nm 2 --mem 8
+python scripts/run_sim.py --trace my.csv --hw examples/hw_default.json --json out.json
+```
+
+```
+mm_512x512x512 on Nd=8 Nm=4 mem=512 with fifo: completed in 0.03s
+  total          258 ticks = 33024 cycles
+  lower bound    248 ticks (matrix-bound), ratio 1.040
+  matrix util    93.0% (effective 93.0%)
+  dma util       37.2%
+  memory         peak 130/512 tiles, mean 17.3%
+  commands       {'LOAD': 128, 'COMPUTE': 512, 'ACC': 448, 'SAVE': 64}, reloads 0, evictions 0
+```
+
+From Python: `simulate(trace, HWConfig(nd, nm, mem), FIFOScheduler())` returns
+a `SimResult`.
+
+### Simulator loop
+
+`matmul_sim/simulator.py`, one iteration per tick at which something finishes:
+
+1. **Retire** every command ending now: its output becomes READY, each input
+   loses one use (and is freed at zero), and finished trace ops release their
+   dependents.
+2. **Issue**: the scheduler offers ready commands in its priority order. Each
+   one starts if its unit has a free slot, its inputs are READY and, if it
+   writes a tile, memory has a free slot. When memory is full, the scheduler
+   may name an input tile to evict.
+3. **Stop** when nothing is running: either every op is done, or the run is
+   **deadlocked** (work left, nothing can start).
+4. **Jump** to the next tick at which a running command finishes.
+
+Run-time commands: one per LOAD, COMPUTE and SAVE op; n-1 binary ACC
+commands per ACC group (see [ACC groups](#acc-groups)); and a reload LOAD
+whenever an input tile that is still needed was evicted. Only input tiles
+(those that came from a LOAD) can be evicted. A run that hits `max_ticks`
+without finishing (for example reload thrashing) is reported as **stalled**.
+
+### Results (`SimResult`)
+
+| Field | Meaning |
+|---|---|
+| `completed`, `deadlock`, `stalled` | how the run ended; `stuck` lists a few blocked ops if it did not finish |
+| `total_ticks`, `total_cycles` | run time (cycles = ticks x 128) |
+| `matrix_util`, `effective_matrix_util` | matrix busy ticks / (Nm x total ticks); effective excludes padding |
+| `dma_util` | DMA busy ticks / (Nd x total ticks) |
+| `mem_series`, `mem_peak`, `mem_mean_pct` | tiles in use over time (step series), peak, time-weighted mean % |
+| `commands`, `reloads`, `evictions` | hardware commands executed per kind, reload LOADs, evictions |
+| `bound`, `bound_ratio` | analytical lower bound and simulated / bound |
+| `schedule` | every executed command with start, end, unit, slot (for Gantt charts) |
+
+### Lower bound
+
+`matmul_sim/bounds.py`, in ticks, valid for any schedule:
+
+| Term | Formula | Why |
+|---|---|---|
+| matrix | Ld + ceil(matrix_cmds / Nm) x Lm + Ld | no compute before the first LOAD lands; the last one is followed by a SAVE |
+| dma | ceil(dma_cmds / Nd) x Ld | every LOAD and SAVE holds a DMA unit for Ld |
+| path | Ld + Lm x (1 + ceil(log2 Kt)) + Ld | one output tile: load, partials in parallel, tree of ACCs, save |
+
+The tests check that every finished run is at or above `max(matrix, dma, path)`.
+
+### Schedulers
+
+`matmul_sim/schedulers/`. The scheduler holds the ready commands and offers
+them in priority order; it also picks the pair for each ACC and the victim
+when memory is full. See `schedulers/base.py` for the protocol.
+
+| Name | Policy |
+|---|---|
+| `fifo` | Trace order across both unit pools; issues everything that fits; never evicts. The baseline. It deadlocks when memory fills with input tiles. |
 
 ## HW model (scoreboard)
 
@@ -284,8 +362,8 @@ values from the brief. Unknown keys are rejected. Example:
 |---|---|---|
 | 0 | Trace and HW config formats, validation, tests | done |
 | 1 | Translator: tiling, padding, dependencies, ACC groups, trace writers | done |
-| 2 | HW model: unit and memory slots, residency, event log | **this PR** |
-| 3 | Simulator + FIFO scheduler, deadlock detection, metrics, lower bound | |
+| 2 | HW model: unit and memory slots, residency, event log | done |
+| 3 | Simulator + FIFO scheduler, deadlock detection, metrics, lower bound | **this PR** |
 | 4 | Greedy and memory-aware schedulers, eviction and reload | |
 | 5 | Analyzer plots | |
 | 6 | Sweep and optimizer | |
@@ -300,8 +378,12 @@ matmul_sim/
   translator.py  # matmul -> trace (tiling, padding, deps, ACC groups)
   workloads.py   # named presets: small, medium, large, skewed
   hw_model.py    # scoreboard: DMA and matrix unit pools, local memory
+  simulator.py   # event loop, ACC pairing, eviction/reload, deadlock detection, metrics
+  bounds.py      # analytical lower bound
+  schedulers/    # base protocol, fifo
 scripts/
   gen_workload.py
+  run_sim.py
 examples/        # hand-written example trace and HW config
 tests/
 ```
