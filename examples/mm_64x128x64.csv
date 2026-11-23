@@ -1,0 +1,15 @@
+# format_version=1
+# name="mm_64x128x64"
+# M=64
+# K=128
+# N=64
+# tile=64
+id,type,srcs,dst,deps
+0,LOAD,,A_0_0,
+1,LOAD,,B_0_0,
+2,LOAD,,A_0_1,
+3,LOAD,,B_1_0,
+4,COMPUTE,A_0_0;B_0_0,P_0_0_0,0;1
+5,COMPUTE,A_0_1;B_1_0,P_0_0_1,2;3
+6,ACC,P_0_0_0;P_0_0_1,S_0_0_1,4;5
+7,SAVE,S_0_0_1,,6
