@@ -83,3 +83,28 @@ def test_little_memory():
     assert t.resident == 169
     expect = 169 + (t.loads * 6 + c.COMPUTE * 2 + c.SAVE * 4) / 14992
     assert little_memory(t, c, 14992) == pytest.approx(expect)
+
+
+@pytest.mark.parametrize("dims", [(64, 64, 64), (1, 1, 1), (100, 200, 300), (64, 8192, 64),
+                                  (4096, 64, 4096), (64, 4096, 4096), (512, 512, 512)])
+def test_optimizer_meets_every_target(dims):
+    """Every optimizer cell finishes within its speed target and fits its memory."""
+    from foundation.optimizer import grid
+
+    g = grid(*dims, points=5)
+    for i, target in enumerate(g["targets"]):
+        for j, _S in enumerate(g["mems"]):
+            cell = g["cells"][i][j]
+            if cell:
+                assert cell["T"] <= target + 1e-6
+                assert cell["mem_needed_pct"] <= 100 + 1e-6
+        assert any(g["cells"][i]), "every speed step has some memory that reaches it"
+
+
+def test_single_tile_edge_case():
+    """64^3 is one tile: path-bound at 9 ticks, 2 DMA units, 3 tiles of memory."""
+    from foundation.optimizer import plan, s_min
+
+    p = plan(64, 64, 64, 9, 4)
+    assert (p["Nd"], p["Nm"]) == (2, 1)
+    assert s_min(64, 64, 64, 9) == 3

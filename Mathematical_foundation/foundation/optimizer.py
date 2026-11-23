@@ -9,8 +9,8 @@ For a target T* and memory S:
 
     Nm = ceil(W / (T* - 2 Ld))                       set by the work alone
     each tiling t with cap_t >= Nm (independent-work cap):
-        Nd_t = ceil((L_t + SAVE) Ld / (T* - 2 Ld))   set by its transfers
-        M_t  = R_t + in-flight (Little's law)        must be <= S
+        Nd_t = ceil((L_t + SAVE) Ld / T*)            set by its transfers (as T_dma in timing.py)
+        M_t  = min(R_t + in-flight, mk + kn + mn)    Little's law, at most the whole job; <= S
     pick the fewest Nd, then the least memory
 
 `grid` evaluates this over a ladder of speed steps and memory steps, which is
@@ -25,6 +25,11 @@ from .counts import op_counts
 from .parallelism import little_memory, tilings
 from .profile import profile
 from .timing import LD, LM
+
+
+def _mem(t, c, win):
+    """Little's-law memory, never more than the whole job's tiles (A, B and C all resident)."""
+    return min(little_memory(t, c, win), c.m * c.k + c.k * c.n + c.m * c.n)
 
 
 def _work(M, K, N):
@@ -43,14 +48,14 @@ def plan(M: int, K: int, N: int, target: float, S: float, _ts=None):
     for t in (_ts or tilings(M, K, N)):
         if t.cap < nm:
             continue
-        nd = math.ceil((t.loads + c.SAVE) * LD / win - 1e-9)
-        mem = little_memory(t, c, win)
+        nd = math.ceil((t.loads + c.SAVE) * LD / target - 1e-9)
+        mem = _mem(t, c, win)
         if mem <= S and (best is None or (nd, mem) < (best[0], best[2])):
             best = (nd, t, mem)
     if best is None:
         return None
     nd, t, mem = best
-    T = 2 * LD + max(math.ceil(W / nm) * LM, (t.loads + c.SAVE) * LD / nd)
+    T = max(2 * LD + math.ceil(W / nm) * LM, (t.loads + c.SAVE) * LD / nd)
     return {"Nd": nd, "Nm": nm, "tiling": t.name, "mem_needed": mem, "loads": t.loads, "T_plan": T}
 
 
@@ -59,7 +64,7 @@ def s_min(M, K, N, target, _ts=None) -> float | None:
     c, W = _work(M, K, N)
     win = target - 2 * LD
     nm = math.ceil(W / win / LM - 1e-9)
-    ms = [little_memory(t, c, win) for t in (_ts or tilings(M, K, N)) if t.cap >= nm]
+    ms = [_mem(t, c, win) for t in (_ts or tilings(M, K, N)) if t.cap >= nm]
     return min(ms) if ms else None
 
 
@@ -72,8 +77,8 @@ def s_sat(M, K, N, target, _ts=None) -> float | None:
     for t in (_ts or tilings(M, K, N)):
         if t.cap < nm:
             continue
-        nd = math.ceil((t.loads + c.SAVE) * LD / win - 1e-9)
-        mem = little_memory(t, c, win)
+        nd = math.ceil((t.loads + c.SAVE) * LD / target - 1e-9)
+        mem = _mem(t, c, win)
         if best is None or (nd, mem) < best:
             best = (nd, mem)
     return best[1] if best else None
@@ -103,8 +108,8 @@ def grid(M: int, K: int, N: int, name: str = "", points: int = 90) -> dict:
     smins = [s_min(M, K, N, T, ts) for T in targets]
     ssats = [s_sat(M, K, N, T, ts) for T in targets]
     top = max(s for s in ssats if s)
-    mems = [2 ** e for e in range(2, 15) if 2 ** e < top * 2] or [4]
-    if mems[-1] < top:
+    mems = [4]
+    while mems[-1] < top:
         mems.append(mems[-1] * 2)
     cells = []
     for i, T in enumerate(targets):

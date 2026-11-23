@@ -23,7 +23,7 @@ const MODEL = (() => {
     return out;
   }
   const inflightWork = (t, c) => t.loads * (LD + LM * (1 + (c.ACC ? 1 : 0))) + c.COMPUTE * 2 * LM + c.SAVE * LD;
-  const littleMemory = (t, c, win) => t.resident + inflightWork(t, c) / win;
+  const littleMemory = (t, c, win) => Math.min(t.resident + inflightWork(t, c) / win, c.m * c.k + c.k * c.n + c.m * c.n);
 
   // timing.predict_time
   function predictTime(c, nd, nm, S) {
@@ -96,12 +96,12 @@ const MODEL = (() => {
     let best = null;
     for (const t of ts) {
       if (t.cap < nm) continue;
-      const nd = Math.ceil((t.loads + c.SAVE) * LD / win - 1e-9);
+      const nd = Math.ceil((t.loads + c.SAVE) * LD / target - 1e-9);
       const mem = littleMemory(t, c, win);
       if (mem <= S && (!best || nd < best.nd || (nd === best.nd && mem < best.mem))) best = { nd, t, mem };
     }
     if (!best) return null;
-    const T = 2 * LD + Math.max(Math.ceil(W / nm) * LM, (best.t.loads + c.SAVE) * LD / best.nd);
+    const T = Math.max(2 * LD + Math.ceil(W / nm) * LM, (best.t.loads + c.SAVE) * LD / best.nd);
     return { Nd: best.nd, Nm: nm, tiling: best.t.name, mem_needed: best.mem, T_plan: T };
   }
   function bounds(c, ts, target) {
@@ -109,7 +109,7 @@ const MODEL = (() => {
     let lo = null, sat = null;
     for (const t of ts) {
       if (t.cap < nm) continue;
-      const nd = Math.ceil((t.loads + c.SAVE) * LD / win - 1e-9), mem = littleMemory(t, c, win);
+      const nd = Math.ceil((t.loads + c.SAVE) * LD / target - 1e-9), mem = littleMemory(t, c, win);
       if (lo === null || mem < lo) lo = mem;
       if (!sat || nd < sat.nd || (nd === sat.nd && mem < sat.mem)) sat = { nd, mem };
     }
@@ -131,10 +131,8 @@ const MODEL = (() => {
     const speeds = speedSteps(c), targets = speeds.map(p => 2 * LD + Math.ceil(W / p) * LM);
     const bs = targets.map(T => bounds(c, ts, T));
     const top = Math.max(...bs.map(b => b[1] || 0));
-    let mems = [];
-    for (let e = 2; e < 15; e++) if (2 ** e < top * 2) mems.push(2 ** e);
-    if (!mems.length) mems = [4];
-    if (mems[mems.length - 1] < top) mems.push(mems[mems.length - 1] * 2);
+    const mems = [4];
+    while (mems[mems.length - 1] < top) mems.push(mems[mems.length - 1] * 2);
     const r1 = x => Math.round(x * 10) / 10;
     const cells = targets.map(T => mems.map(S => {
       const p = plan(c, ts, T, S);
