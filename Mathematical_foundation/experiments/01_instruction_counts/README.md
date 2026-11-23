@@ -12,8 +12,8 @@ total when local memory holds only 64 or 256 tiles. Run `python run.py`
 |---|---|
 | `outputs/mac_instructions.png` | COMPUTE, ACC and their total |
 | `outputs/dma_instructions.png` | LOAD, SAVE, their total, and the total with limited memory |
-| `outputs/mac_vs_dma_line.png` | MAC total vs DMA total, line chart |
-| `outputs/mac_vs_dma_bar.png` | MAC total vs DMA total, grouped bars |
+| `outputs/mac_vs_dma_line.png` | MAC total vs DMA with no reuse and with perfect reuse, line chart |
+| `outputs/mac_vs_dma_bar.png` | the same three totals as grouped bars |
 | `outputs/op_counts.csv` | every number behind the graphs |
 
 **Findings.**
@@ -23,6 +23,10 @@ total when local memory holds only 64 or 256 tiles. Run `python run.py`
 - DMA instructions grow as N² (4× per doubling) when every tile is moved once,
   reaching 12,288 at 4096³. With limited memory, reloads make them grow faster:
   4096³ needs 81,920 at S = 64 tiles, 6.7× the compulsory count.
-- The counts are equal at 128³ (12 each). Beyond that MAC leads, by 42× at 4096³.
+- With **no reuse** (every COMPUTE loads its own A and B: 2mnk LOADs) DMA
+  instructions roughly equal MAC instructions at every size (528,384 vs 520,192
+  at 4096³). Since a DMA op takes 4× as long, a machine without reuse is
+  DMA-bound at every size.
+- With **perfect reuse** the counts are equal at 128³ (12 each). Beyond that MAC leads, by 42× at 4096³.
   A DMA instruction takes 4× as long as a MAC instruction (512 vs 128 cycles),
   so in time the crossover comes later, around 512³.

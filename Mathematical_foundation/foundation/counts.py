@@ -5,6 +5,7 @@ With m, k, n = ceil(M/64), ceil(K/64), ceil(N/64) tiles:
     matrix units (MAC)                 DMA units
       COMPUTE = m*n*k                    LOAD (compulsory) = k*(m + n)
       ACC     = m*n*(k - 1)              SAVE              = m*n
+                                         LOAD (no reuse)   = 2*m*n*k   (each COMPUTE loads its own A, B)
 
 With only S tiles of local memory some input tiles must be loaded more than once.
 loads_with_memory() returns the fewest LOADs any block or panel tiling needs
@@ -51,10 +52,21 @@ class OpCounts:
 
     @property
     def dma_total(self) -> int:
+        """Perfect reuse: every input tile loaded exactly once."""
         return self.LOAD + self.SAVE
 
+    @property
+    def load_no_reuse(self) -> int:
+        """No reuse: every COMPUTE loads its own A and B tile, 2*m*n*k LOADs."""
+        return 2 * self.m * self.n * self.k
+
+    @property
+    def dma_no_reuse(self) -> int:
+        return self.load_no_reuse + self.SAVE
+
     def as_dict(self) -> dict:
-        return {**asdict(self), "MAC_total": self.mac_total, "DMA_total": self.dma_total}
+        return {**asdict(self), "MAC_total": self.mac_total, "DMA_total": self.dma_total,
+                "LOAD_no_reuse": self.load_no_reuse, "DMA_no_reuse": self.dma_no_reuse}
 
 
 def op_counts(M: int, K: int, N: int) -> OpCounts:
