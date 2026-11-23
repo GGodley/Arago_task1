@@ -47,3 +47,13 @@ def test_timing_limits():
     assert big.limiter == "matrix" and big.T == 8 + 64 * 64 * 127
     slow = predict_time(4096, 4096, 4096, 1, 32, 1024)  # one DMA unit: DMA-bound
     assert slow.limiter == "dma"
+
+
+def test_tilings_match_loads_and_cap():
+    from foundation import loads_with_memory, tilings
+
+    ts = tilings(4096, 4096, 4096)
+    for S in (8, 64, 543, 4162):
+        assert min(t.loads for t in ts if t.need <= S) == loads_with_memory(4096, 4096, 4096, S)
+    b = next(t for t in ts if t.name == "block4x5")
+    assert b.open == 20 and b.cap == 40

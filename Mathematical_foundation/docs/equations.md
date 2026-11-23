@@ -38,6 +38,11 @@ All quantities are in tiles (one 64x64 block) or ticks (128 cycles).
                             COMPUTE/ACC (2 per matrix unit) can overlap
     tiling budget:  (bm + 1)(bn + 1) <= S - O,   no reloads once S >= S0 + O
 
+## Step 2c: independent-work cap (implemented in `foundation/parallelism.py`)
+
+    Nm_eff <= (1 + acc) * open     open = bm bn (block) or p (panel): output tiles with a running sum in memory
+                                   each running sum takes one ACC per tick, fed by one COMPUTE
+
 ## Step 3: memory sets concurrency (implemented in `foundation/timing.py`)
 
     Little's law:  DMA rate <= min(Nd / Ld, F / tau)

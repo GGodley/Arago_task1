@@ -54,4 +54,5 @@ python -m pytest Mathematical_foundation/tests
 | 02 | How do instruction counts change with local memory size (4096³)? | done |
 | 03 | [Timing vs units](experiments/03_timing_vs_units/): heatmaps of time over DMA and matrix unit counts | done |
 | 04 | [Balanced overhead](experiments/04_balanced_overhead/): DMA vs memory with the overlap overhead of balanced unit counts | done |
-| 05 | Optimizer: cheapest (Nd, Nm, S) for a workload and time target | planned |
+| 05 | [Work cap and time target](experiments/05_work_cap_and_time_target/): independent-work cap; cheapest setup under a time target | done |
+| 06 | Optimizer: cheapest (Nd, Nm, S) for a workload and time target | planned |
