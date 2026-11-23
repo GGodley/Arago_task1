@@ -15,7 +15,7 @@ class EvictFirst(FIFOScheduler):
     name = "evict_first"
     evicts = True
 
-    def victim(self, sim, candidates):
+    def victim(self, sim, candidates, cmd):
         return candidates[0]
 
 

@@ -42,6 +42,15 @@ class LowerBound:
         return max(("matrix", self.matrix), ("dma", self.dma), ("path", self.path), key=lambda kv: kv[1])[0]
 
 
+def min_memory_tiles(trace: Trace) -> int:
+    """Smallest local memory that can finish the trace, working one output tile at a time.
+
+    3 tiles when there is no ACC (A, B, P); 4 otherwise (running sum, A, B, new partial).
+    """
+    has_acc = any(op.type.value == "ACC" for op in trace.ops)
+    return 4 if has_acc else 3
+
+
 def lower_bound(trace: Trace, hw: HWConfig) -> LowerBound:
     c = trace.hw_op_counts()
     matrix_cmds = c["COMPUTE"] + c["ACC"]

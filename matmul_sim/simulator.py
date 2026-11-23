@@ -34,7 +34,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from .bounds import LowerBound, lower_bound
+from .bounds import LowerBound, lower_bound, min_memory_tiles
 from .hw_config import HWConfig
 from .hw_model import HWModel
 from .schedulers.base import Command, Scheduler
@@ -80,6 +80,12 @@ class SimResult:
     ops_total: int = 0
     stuck: list[str] = field(default_factory=list)  # a few blocked commands, on deadlock
     schedule: list[ScheduledCmd] = field(default_factory=list)
+    min_mem_tiles: int = 0
+
+    @property
+    def infeasible_memory(self) -> bool:
+        """Local memory is below the minimum any schedule needs (see bounds.min_memory_tiles)."""
+        return self.config.local_mem_tiles < self.min_mem_tiles
 
     @property
     def bound_ratio(self) -> float:
@@ -101,6 +107,7 @@ class SimResult:
             "completed": self.completed,
             "deadlock": self.deadlock,
             "stalled": self.stalled,
+            "infeasible_memory": self.infeasible_memory,
             "total_ticks": self.total_ticks,
             "total_cycles": self.total_cycles,
             "lower_bound_ticks": self.bound.ticks,
@@ -234,6 +241,7 @@ class Simulator:
             ops_total=total,
             stuck=self._stuck_report() if not completed else [],
             schedule=self.schedule,
+            min_mem_tiles=min_memory_tiles(self.trace),
         )
 
     # ------------------------------------------------------------- readiness
@@ -300,7 +308,7 @@ class Simulator:
                 return False  # an input was evicted; its reload is pending
 
         if cmd.needs_memory and not mem.can_allocate():
-            if not self._evict_for(srcs):
+            if not self._evict_for(cmd, srcs):
                 self.mem_blocked = True
                 return False
 
@@ -334,7 +342,7 @@ class Simulator:
             self._maybe_offer_acc(cmd.op_id)  # more pairs may be ready
         return True
 
-    def _evict_for(self, protect: tuple[str, ...]) -> bool:
+    def _evict_for(self, cmd: Command, protect: tuple[str, ...]) -> bool:
         """Free one slot by evicting an input tile chosen by the scheduler."""
         if not self.scheduler.evicts:
             return False
@@ -342,7 +350,7 @@ class Simulator:
         cands = [t for t in mem.evictable() if t in self.load_op_of and t not in protect]
         if not cands:
             return False
-        victim = self.scheduler.victim(self, cands)
+        victim = self.scheduler.victim(self, cands, cmd)
         if victim is None:
             return False
         if victim not in cands:

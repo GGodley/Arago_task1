@@ -6,9 +6,9 @@ takes a workload (a trace of operations) and a hardware configuration, and
 reports matrix-unit utilization, local memory occupancy over time and total
 cycles. A sweep script then searches the hardware parameters for each workload.
 
-Status: **Phase 3 (simulator)**. Workload generator, HW scoreboard,
-event-driven simulator, in-order (FIFO) scheduler and analytical lower bound
-are in place. Smarter schedulers come next. The simulator itself comes in later phases
+Status: **Phase 4 (schedulers)**. Workload generator, HW scoreboard,
+event-driven simulator, analytical lower bound, and three schedulers (FIFO,
+greedy reuse-first, memory-aware) with row, snake and blocked tile orders. The simulator itself comes in later phases
 (see [Build plan](#build-plan)).
 
 ## Quick start
@@ -139,7 +139,8 @@ is infeasible. The memory sweep starts there.
 
 ```bash
 python scripts/run_sim.py --mkn 512 512 512 --nd 8 --nm 4 --mem 512
-python scripts/run_sim.py --preset small_256 --nd 2 --nm 2 --mem 8
+python scripts/run_sim.py --preset small_256 --nd 2 --nm 2 --mem 8 --scheduler greedy
+python scripts/run_sim.py --mkn 1024 1024 1024 --nd 16 --nm 16 --mem 128 --order blocked
 python scripts/run_sim.py --trace my.csv --hw examples/hw_default.json --json out.json
 ```
 
@@ -211,6 +212,35 @@ when memory is full. See `schedulers/base.py` for the protocol.
 | Name | Policy |
 |---|---|
 | `fifo` | Trace order across both unit pools; issues everything that fits; never evicts. The baseline. It deadlocks when memory fills with input tiles. |
+| `greedy` | Reuse-first. Matrix units: ACC first (frees memory), then COMPUTE, preferring output tiles already started. DMA: SAVE first, then LOADs that complete a pair with a tile already in memory, then the rest in tile order. Issues everything that fits and never evicts, so it can still deadlock. |
+| `memaware` | Same ranking, plus three rules. **Output budget:** worked one step at a time an output tile needs at most J slots (running sum, next A, next B, new partial: J = 4, or 3 when Kt = 1), so at most `capacity // J` outputs are in progress. **Load gating:** inputs for the next step of an output in progress always load (evicting if needed); other loads are prefetch and only use spare room. **Eviction:** when a COMPUTE, ACC or such a needed LOAD can't get a slot, evict the input tile whose next use is furthest away, never one the next step of an output in progress needs. It never evicts for prefetch, which is what causes thrashing. |
+
+`greedy` and `memaware` take `order` (`row`, `snake`, `blocked`) and `block`
+(default 4): the order in which output tiles are worked on. `snake` reverses
+direction on alternate rows so the last B column is reused; `blocked` works on
+block x block groups of outputs that share block rows of A and block columns
+of B. The order is read from the translator's `P_i_j_k` tile names.
+
+`memaware` finishes at every memory size down to the minimum (3 or 4 tiles,
+`bounds.min_memory_tiles`); below it no schedule can finish and the result has
+`infeasible_memory = True`.
+
+Example, 512³ on Nd = 4, Nm = 4 (lower bound 248 ticks), ticks and reloads:
+
+| memory (tiles) | fifo | greedy | memaware | memaware snake | memaware blocked |
+|---|---|---|---|---|---|
+| 4 | deadlock | deadlock | 3264 (896 reloads) | 3264 (896 reloads) | 3264 (896 reloads) |
+| 8 | deadlock | deadlock | 1384 (792 reloads) | 1384 (792 reloads) | 1384 (792 reloads) |
+| 16 | deadlock | deadlock | 799 (580 reloads) | 758 (535 reloads) | 803 (586 reloads) |
+| 32 | deadlock | deadlock | 544 (335 reloads) | 509 (302 reloads) | 515 (310 reloads) |
+| 64 | deadlock | deadlock | 356 (124 reloads) | 347 (118 reloads) | 316 (81 reloads) |
+| 128 | 298 (0 reloads) | 277 (0 reloads) | 293 (0 reloads) | 293 (0 reloads) | 278 (0 reloads) |
+| 256 | 298 (0 reloads) | 260 (0 reloads) | 293 (0 reloads) | 293 (0 reloads) | 278 (0 reloads) |
+
+With ample memory `greedy` is fastest; `memaware` pays a little for keeping
+room in reserve. As memory shrinks, `fifo` and `greedy` deadlock while
+`memaware` keeps going at the cost of reloads. `blocked` helps most when
+memory is tight but not tiny.
 
 ## HW model (scoreboard)
 
@@ -363,8 +393,8 @@ values from the brief. Unknown keys are rejected. Example:
 | 0 | Trace and HW config formats, validation, tests | done |
 | 1 | Translator: tiling, padding, dependencies, ACC groups, trace writers | done |
 | 2 | HW model: unit and memory slots, residency, event log | done |
-| 3 | Simulator + FIFO scheduler, deadlock detection, metrics, lower bound | **this PR** |
-| 4 | Greedy and memory-aware schedulers, eviction and reload | |
+| 3 | Simulator + FIFO scheduler, deadlock detection, metrics, lower bound | done |
+| 4 | Greedy and memory-aware schedulers, eviction and reload | **this PR** |
 | 5 | Analyzer plots | |
 | 6 | Sweep and optimizer | |
 | 7 | Experiments, report, packaging | |
@@ -380,7 +410,7 @@ matmul_sim/
   hw_model.py    # scoreboard: DMA and matrix unit pools, local memory
   simulator.py   # event loop, ACC pairing, eviction/reload, deadlock detection, metrics
   bounds.py      # analytical lower bound
-  schedulers/    # base protocol, fifo
+  schedulers/    # base protocol, fifo, reuse (greedy, memaware)
 scripts/
   gen_workload.py
   run_sim.py
