@@ -6,9 +6,9 @@ takes a workload (a trace of operations) and a hardware configuration, and
 reports matrix-unit utilization, local memory occupancy over time and total
 cycles. A sweep script then searches the hardware parameters for each workload.
 
-Status: **Phase 0 (spec freeze)**. The trace and HW config formats, with their
-loaders, validators and tests, are in place. The simulator itself comes in
-later phases (see [Build plan](#build-plan)).
+Status: **Phase 1 (translator)**. The trace and HW config formats and the
+workload generator are in place. The simulator itself comes in later phases
+(see [Build plan](#build-plan)).
 
 ## Quick start
 
@@ -16,6 +16,50 @@ later phases (see [Build plan](#build-plan)).
 pip install -e ".[test]"   # or just: pip install numpy matplotlib pytest
 python -m pytest
 ```
+
+## Generating workloads
+
+```bash
+python scripts/gen_workload.py --mkn 512 512 512                 # one matmul -> results/traces/
+python scripts/gen_workload.py --mkn 100 200 300 --format csv --out my.csv
+python scripts/gen_workload.py --preset small --order snake      # a workload class
+python scripts/gen_workload.py --preset all                      # every preset
+```
+
+Options:
+
+| Option | Values | Meaning |
+|---|---|---|
+| `--order` | `row` (default), `snake`, `blocked` | Order in which output tiles are visited. Sets the suggested program order only; execution is constrained by deps alone. |
+| `--block BI BJ` | default `4 4` | Group size for `blocked`: groups of BI x BJ output tiles share BI rows of A and BJ columns of B. |
+| `--acc` | `chain` (default), `tree` | Shape of the ACC reduction per output tile. `chain` puts Kt-1 ACCs on the critical path, `tree` puts ceil(log2 Kt). Same op count. |
+
+Dimensions that are not multiples of 64 are padded up. The trace metadata
+records `useful_fraction` (real work / padded work) and `footprint_tiles`
+(distinct A, B and C tiles).
+
+Op counts for a matmul of `Mt x Kt x Nt` tiles:
+
+| Op | Count |
+|---|---|
+| LOAD | Mt·Kt + Kt·Nt |
+| COMPUTE | Mt·Nt·Kt |
+| ACC | Mt·Nt·(Kt-1) |
+| SAVE | Mt·Nt |
+
+## Workload classes
+
+Classes are defined against the hardware through two ratios: output tiles
+`Mt·Nt` vs `Nm` (parallelism) and footprint vs local memory (reuse).
+
+| Class | Presets | Footprint (tiles) | Character |
+|---|---|---|---|
+| small | 64³, 128³, 256³ | 3 to 48 | Fits in memory; latency-bound; few parallel ops |
+| medium | 512³, 1024³ | 192 to 768 | Around the swept memory sizes; the regime flips |
+| large | 2048³, 4096³ | 3,072 to 12,288 | Far beyond memory; bandwidth- and reuse-bound |
+| skewed | 64x4096x4096, 4096x64x4096, 64x8192x64, 100x200x300 | 38 to 4,224 | Decode-like, Kt = 1 (no ACC), long ACC chain, padding |
+
+The largest preset (4096³) is 532k ops and generates in a few seconds.
 
 ## Architecture
 
@@ -194,8 +238,8 @@ values from the brief. Unknown keys are rejected. Example:
 
 | Phase | Work | Status |
 |---|---|---|
-| 0 | Trace and HW config formats, validation, tests | **this PR** |
-| 1 | Translator: tiling, padding, DAG, program order, trace writers | |
+| 0 | Trace and HW config formats, validation, tests | done |
+| 1 | Translator: tiling, padding, DAG, program order, trace writers | **this PR** |
 | 2 | HW model: unit and memory slots, residency, event log | |
 | 3 | Simulator + FIFO scheduler, deadlock detection, metrics, lower bound | |
 | 4 | Greedy and memory-aware schedulers, eviction and reload | |
@@ -209,6 +253,10 @@ values from the brief. Unknown keys are rejected. Example:
 matmul_sim/
   trace.py       # trace data model, JSON/CSV I/O, validation
   hw_config.py   # HW parameters and fixed constants
+  translator.py  # matmul -> trace (tiling, padding, deps, orders, ACC shape)
+  workloads.py   # named presets: small, medium, large, skewed
+scripts/
+  gen_workload.py
 examples/        # hand-written example trace and HW config
 tests/
 ```
