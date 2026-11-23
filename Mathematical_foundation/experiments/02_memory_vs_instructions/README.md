@@ -13,7 +13,7 @@ included. Run `python run.py` (options: `--size 4096`, `--mem "4;8;...;8192"`).
 | `outputs/instructions_vs_memory_4096.png` | MAC, DMA no-reuse ceiling, DMA perfect-reuse floor, DMA at each S |
 | `outputs/instructions_vs_memory_4096.csv` | every point, including reuse factor 2mnk/L |
 | `outputs/instructions_vs_memory_{64,256,512,1024,2048}.png` (+ CSV) | the same for the other sizes |
-| `outputs/instructions_vs_memory_4096_overlap_nd16_nm16.png`, `_512_overlap_nd8_nm8.png` | adds the curve after reserving overlap overhead |
+| `outputs/instructions_vs_memory_{64,128,256,512,1024,2048,4096}_overlap_nd8_nm8.png` (+ `.csv`) | same chart for every size, plus the curve after reserving overlap overhead (Nd = 8, Nm = 8, O = 23) |
 
 **Findings (4096³).**
 
@@ -52,9 +52,33 @@ tiling budget: (bm + 1)(bn + 1) <= S - O
 ```
 
 Every DMA unit does a LOAD or a SAVE, never both, so one slot per DMA unit
-covers both. With `--nd 16 --nm 16`, O = 47: 4096³ cannot run below 51 tiles,
-needs 2.3× the ideal DMA at S = 64, and is within 10% of ideal from S = 256 up.
-The no-reload point moves from S₀ to S₀ + O.
+covers both. The no-reload point moves from S₀ to S₀ + O.
 
-Regenerate with `--size 4096 --nd 16 --nm 16` and
-`--size 512 --mem "4;8;...;1024" --nd 8 --nm 8`.
+All seven sizes use one setting, `--nd 8 --nm 8` (O = 23), so they compare
+directly. Any job needs at least 26 tiles with this overlap.
+
+| Size | S₀ | S₀ + O | DMA at S = 32, ideal / overlap | DMA at S = 64 | DMA at S = 256 |
+|---|---|---|---|---|---|
+| 64³ | 3 | 26 | 3 / 3 | 3 / 3 | 3 / 3 |
+| 128³ | 8 | 31 | 12 / 12 | 12 / 12 | 12 / 12 |
+| 256³ | 22 | 45 | 48 / 80 | 48 / 48 | 48 / 48 |
+| 512³ | 74 | 97 | 320 / 576 | 256 / 256 | 192 / 192 |
+| 1024³ | 274 | 297 | 2,304 / 4,352 | 1,536 / 2,048 | 1,024 / 1,024 |
+| 2048³ | 1,058 | 1,081 | 16,384 / 33,792 | 11,264 / 14,336 | 6,144 / 6,144 |
+| 4096³ | 4,162 | 4,185 | 122,880 / 266,240 | 81,920 / 110,592 | 40,960 / 45,056 |
+
+The overhead is a fixed number of slots, so it hurts most when S is small and
+fades as S grows: about 2× the DMA at S = 32, and within 10% by S = 256 for
+every size.
+
+Regenerate (memory lists as used):
+
+```
+python run.py --size 64   --mem "3;4;8;16;32;64;128;256;512"       --nd 8 --nm 8
+python run.py --size 128  --mem "4;8;16;32;64;128;256;512"         --nd 8 --nm 8
+python run.py --size 256  --mem "4;8;16;32;64;128;256;512"         --nd 8 --nm 8
+python run.py --size 512  --mem "4;8;16;32;64;128;256;512;1024"    --nd 8 --nm 8
+python run.py --size 1024 --mem "4;8;16;32;64;128;256;512;1024;2048" --nd 8 --nm 8
+python run.py --size 2048 --mem "4;8;16;32;64;128;256;512;1024;2048;4096;8192" --nd 8 --nm 8
+python run.py --size 4096 --mem "4;8;16;32;64;128;256;512;1024;2048;4096;8192" --nd 8 --nm 8
+```
