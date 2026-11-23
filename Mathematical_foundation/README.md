@@ -18,10 +18,11 @@ Mathematical_foundation/
 │   ├── counts.py             instruction counts and LOADs under limited memory
 │   └── plotting.py           shared figure style for every experiment
 ├── experiments/              one numbered folder per experiment
-│   └── 01_instruction_counts/
-│       ├── README.md         question, method, findings
-│       ├── run.py            regenerates everything in outputs/
-│       └── outputs/          graphs and CSV (committed so they can be viewed on GitHub)
+│   ├── 01_instruction_counts/
+│   │   ├── README.md         question, method, findings
+│   │   ├── run.py            regenerates everything in outputs/
+│   │   └── outputs/          graphs and CSV (committed so they can be viewed on GitHub)
+│   └── 02_memory_vs_instructions/   same structure
 └── tests/                    checks the formulas against the simulator's own trace
 ```
 
@@ -30,6 +31,7 @@ Mathematical_foundation/
 ```bash
 pip install -e ".[test]"          # from the repo root: numpy, matplotlib, pytest
 python Mathematical_foundation/experiments/01_instruction_counts/run.py
+python Mathematical_foundation/experiments/02_memory_vs_instructions/run.py
 python -m pytest Mathematical_foundation/tests
 ```
 
@@ -49,5 +51,6 @@ python -m pytest Mathematical_foundation/tests
 | # | Question | Status |
 |---|---|---|
 | 01 | How do MAC and DMA instruction counts grow with matrix size? | done |
-| 02 | Timing model: predicted cycles and utilization vs simulator | planned |
-| 03 | Optimizer: cheapest (Nd, Nm, S) for a workload and time target | planned |
+| 02 | How do instruction counts change with local memory size (4096³)? | done |
+| 03 | Timing model: predicted cycles and utilization vs simulator | planned |
+| 04 | Optimizer: cheapest (Nd, Nm, S) for a workload and time target | planned |
