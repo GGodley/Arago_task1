@@ -1,0 +1,5 @@
+example,M,K,N,Nd,Nm,S,tiling,limiter,cycles_model,cycles_sim,cycles_err_pct,matrix_util_model,matrix_util_sim,dma_util_model,dma_util_sim,mem_needed_mean,mem_prefetch_mean,mem_sim_mean,mem_sim_peak
+small_128,128,128,128,2,2,16,block2x2,dma,3072,3328,-7.7,25.0,23.1,100.0,92.3,41.1,43.5,33.7,62.5
+medium_512,512,512,512,8,4,128,block8x8,matrix,31744,32000,-0.8,96.8,96.0,38.7,38.4,55.1,82.3,65.8,93.8
+large_2048,2048,2048,2048,16,32,512,block11x32,matrix,259072,285824,-9.4,99.6,90.3,63.2,93.8,77.5,98.7,92.5,100.0
+decode_64x4096x4096,64,4096,4096,16,8,256,block1x64,dma,135168,136576,-1.0,96.2,95.2,100.0,99.0,37.1,37.3,42.3,53.5
